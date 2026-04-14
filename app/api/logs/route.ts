@@ -166,6 +166,11 @@ export async function POST(request: NextRequest) {
 //         search (processName or owner substring)
 // ─────────────────────────────────────────
 export async function GET(request: NextRequest) {
+  // Temporary: verify the app is reading DATABASE_URL (password masked)
+  const rawUrl = process.env.DATABASE_URL ?? "(not set)";
+  const maskedUrl = rawUrl.replace(/:([^@]+)@/, ":***@");
+  console.log("[GET /api/logs] DATABASE_URL =", maskedUrl);
+
   const { searchParams } = new URL(request.url);
   const fromParam = searchParams.get("from");
   const toParam = searchParams.get("to");

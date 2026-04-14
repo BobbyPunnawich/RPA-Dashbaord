@@ -1,5 +1,11 @@
 import { PrismaClient } from "@prisma/client";
 
+if (!process.env.DATABASE_URL) {
+  console.error(
+    "[prisma.ts] DATABASE_URL is undefined — check your .env / .env.local file"
+  );
+}
+
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
 
 export const prisma =
