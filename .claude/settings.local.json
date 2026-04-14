@@ -12,7 +12,13 @@
       "Bash(npm install:*)",
       "Bash(npx prisma:*)",
       "Bash(npx tsc:*)",
-      "Bash(DATABASE_URL=\"postgresql://x:x@localhost/x\" npm run build)"
+      "Bash(DATABASE_URL=\"postgresql://x:x@localhost/x\" npm run build)",
+      "Bash(npm run:*)",
+      "Bash(taskkill /F /IM node.exe)",
+      "Bash(del /F \"C:\\\\Visual Studio Code Project\\\\RPA-Dashbaord\\\\node_modules\\\\.prisma\\\\client\\\\query_engine-windows.dll.node\")",
+      "Bash(curl -s http://localhost:3000/api/processes)",
+      "Bash(curl -s \"http://localhost:3000/api/logs?from=2026-04-01&to=2026-04-30\")",
+      "Bash(curl:*)"
     ]
   }
 }

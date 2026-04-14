@@ -10,15 +10,28 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model ProcessDefinition {
+  id                Int          @id @default(autoincrement())
+  processName       String       @unique
+  owner             String       @default("")
+  expectedStartTime String       @default("08:00") // HH:MM 24h format
+  slaMaxDuration    Int          @default(3600)     // seconds
+  createdAt         DateTime     @default(now())
+}
+
 model SummaryLog {
-  id            Int      @id @default(autoincrement())
-  transactionId String   @unique
+  id            Int       @id @default(autoincrement())
+  transactionId String    @unique
   processName   String
-  status        String   // "Success" | "Failed"
+  status        String    // "Success" | "Failed"
   startTime     DateTime
+  endTime       DateTime?
   durationSec   Float
-  volumeCount   Int      @default(0)
-  createdAt     DateTime @default(now())
+  volumeCount   Int       @default(0)
+  remarks       String    @default("")
+  isLateStart   Boolean   @default(false)
+  isSLABreach   Boolean   @default(false)
+  createdAt     DateTime  @default(now())
 
   errorDetail ErrorDetail?
 
