@@ -14,6 +14,7 @@ export async function PUT(
 
   let body: {
     owner?: string;
+    botType?: string;
     expectedStartTime?: string;
     slaMaxDuration?: number;
   };
@@ -24,13 +25,14 @@ export async function PUT(
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { owner, expectedStartTime, slaMaxDuration } = body;
+  const { owner, botType, expectedStartTime, slaMaxDuration } = body;
+
+  if (botType && botType !== "Scheduled" && botType !== "OnDemand") {
+    return NextResponse.json({ error: 'botType must be "Scheduled" or "OnDemand"' }, { status: 422 });
+  }
 
   if (expectedStartTime && !/^\d{2}:\d{2}$/.test(expectedStartTime)) {
-    return NextResponse.json(
-      { error: "expectedStartTime must be HH:MM" },
-      { status: 422 }
-    );
+    return NextResponse.json({ error: "expectedStartTime must be HH:MM" }, { status: 422 });
   }
 
   try {
@@ -38,6 +40,7 @@ export async function PUT(
       where: { id: numId },
       data: {
         ...(owner !== undefined && { owner }),
+        ...(botType !== undefined && { botType }),
         ...(expectedStartTime !== undefined && { expectedStartTime }),
         ...(slaMaxDuration !== undefined && { slaMaxDuration }),
       },

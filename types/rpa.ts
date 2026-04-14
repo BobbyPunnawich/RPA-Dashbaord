@@ -1,8 +1,11 @@
+export type BotType = "Scheduled" | "OnDemand";
+
 export interface ProcessDefinition {
   id: number;
   processName: string;
   owner: string;
-  expectedStartTime: string; // "HH:MM"
+  botType: BotType;
+  expectedStartTime: string; // "HH:MM" — relevant only for Scheduled bots
   slaMaxDuration: number;    // seconds
   createdAt: string;
 }

@@ -14,8 +14,9 @@ model ProcessDefinition {
   id                Int          @id @default(autoincrement())
   processName       String       @unique
   owner             String       @default("")
-  expectedStartTime String       @default("08:00") // HH:MM 24h format
-  slaMaxDuration    Int          @default(3600)     // seconds
+  botType           String       @default("Scheduled") // "Scheduled" | "OnDemand"
+  expectedStartTime String       @default("08:00")     // HH:MM — only used by Scheduled bots
+  slaMaxDuration    Int          @default(3600)         // seconds
   createdAt         DateTime     @default(now())
 }
 

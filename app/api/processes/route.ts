@@ -19,6 +19,7 @@ export async function POST(request: NextRequest) {
   let body: {
     processName?: string;
     owner?: string;
+    botType?: string;
     expectedStartTime?: string;
     slaMaxDuration?: number;
   };
@@ -29,14 +30,24 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { processName, owner = "", expectedStartTime = "08:00", slaMaxDuration = 3600 } = body;
+  const {
+    processName,
+    owner = "",
+    botType = "Scheduled",
+    expectedStartTime = "08:00",
+    slaMaxDuration = 3600,
+  } = body;
 
   if (!processName?.trim()) {
     return NextResponse.json({ error: "processName is required" }, { status: 422 });
   }
 
-  // Validate HH:MM format
-  if (!/^\d{2}:\d{2}$/.test(expectedStartTime)) {
+  if (botType !== "Scheduled" && botType !== "OnDemand") {
+    return NextResponse.json({ error: 'botType must be "Scheduled" or "OnDemand"' }, { status: 422 });
+  }
+
+  // Validate HH:MM only for Scheduled bots
+  if (botType === "Scheduled" && !/^\d{2}:\d{2}$/.test(expectedStartTime)) {
     return NextResponse.json(
       { error: "expectedStartTime must be HH:MM (e.g. 08:30)" },
       { status: 422 }
@@ -48,7 +59,8 @@ export async function POST(request: NextRequest) {
       data: {
         processName: processName.trim(),
         owner,
-        expectedStartTime,
+        botType,
+        expectedStartTime: botType === "Scheduled" ? expectedStartTime : "",
         slaMaxDuration,
       },
     });
