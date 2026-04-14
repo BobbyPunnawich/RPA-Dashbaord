@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx create-next-app@latest . --typescript --tailwind --eslint --app --no-src-dir --import-alias \"@/*\" --yes)",
+      "Bash(npx create-next-app@latest . --typescript --tailwind --eslint --app --no-src-dir --import-alias \"@/*\" --yes --name rpa-dashboard)",
+      "Bash(npm --version)",
+      "Bash(cp -r \"/c/Visual Studio Code Project/rpa-dashboard-temp/app\" \"/c/Visual Studio Code Project/RPA-Dashbaord/\")",
+      "Bash(cp -r \"/c/Visual Studio Code Project/rpa-dashboard-temp/public\" \"/c/Visual Studio Code Project/RPA-Dashbaord/\")",
+      "Bash(cp \"/c/Visual Studio Code Project/rpa-dashboard-temp/next.config.ts\" \"/c/Visual Studio Code Project/RPA-Dashbaord/\")",
+      "Bash(cp \"/c/Visual Studio Code Project/rpa-dashboard-temp/postcss.config.mjs\" \"/c/Visual Studio Code Project/RPA-Dashbaord/\")",
+      "Bash(cp \"/c/Visual Studio Code Project/rpa-dashboard-temp/tsconfig.json\" \"/c/Visual Studio Code Project/RPA-Dashbaord/\")",
+      "Bash(npm install:*)",
+      "Bash(npx prisma:*)",
+      "Bash(npx tsc:*)",
+      "Bash(DATABASE_URL=\"postgresql://x:x@localhost/x\" npm run build)"
+    ]
+  }
+}

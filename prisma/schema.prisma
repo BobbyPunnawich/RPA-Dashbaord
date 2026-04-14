@@ -1,0 +1,37 @@
+// RPA Monitoring Dashboard - Prisma Schema
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model SummaryLog {
+  id            Int      @id @default(autoincrement())
+  transactionId String   @unique
+  processName   String
+  status        String   // "Success" | "Failed"
+  startTime     DateTime
+  durationSec   Float
+  volumeCount   Int      @default(0)
+  createdAt     DateTime @default(now())
+
+  errorDetail ErrorDetail?
+
+  @@index([processName])
+  @@index([status])
+  @@index([startTime])
+}
+
+model ErrorDetail {
+  id             Int    @id @default(autoincrement())
+  transactionId  String @unique
+  errorMessage   String @db.Text
+  screenshotPath String @default("")
+
+  summaryLog SummaryLog @relation(fields: [transactionId], references: [transactionId], onDelete: Cascade)
+}
