@@ -87,10 +87,17 @@ export async function POST(request: NextRequest) {
   const durationSec = Math.max(0, Math.round((end.getTime() - start.getTime()) / 1000));
 
   // ── Auto-register process if it doesn't exist ──
+  // Explicit defaults so PAD-triggered bots land as OnDemand / Unassigned.
   const processDef = await prisma.processDefinition.upsert({
     where: { processName },
     update: {},
-    create: { processName },
+    create: {
+      processName,
+      owner:             "Unassigned",
+      botType:           "OnDemand",
+      slaMaxDuration:    1800,
+      expectedStartTime: "",
+    },
   });
 
   // ── SLA checks ──
