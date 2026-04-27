@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, X, Trash2, ChevronRight, Clock, Zap } from "lucide-react";
+import Link from "next/link";
+import { Plus, X, Trash2, ChevronRight, Clock, Zap, Settings2 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
   DialogDescription, DialogFooter, DialogClose,
@@ -420,10 +421,22 @@ function BotTable({ rows, showStartCol, todayIndex, todayInRange, processDefMap,
               <tr key={row.processName}>
                 {/* Process */}
                 <td className="px-4 py-2.5 sticky left-0 z-10 w-[152px] min-w-[152px] bg-gray-900">
-                  <button onClick={() => onSideSheet(row.processName)} className="flex items-center gap-1.5 group text-left w-full">
-                    <span className="text-gray-200 font-medium text-sm group-hover:text-indigo-300 transition-colors truncate max-w-[122px]">{row.processName}</span>
-                    <ChevronRight size={11} className="text-gray-700 group-hover:text-indigo-500 transition-colors shrink-0" />
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <Link
+                      href={`/process/${encodeURIComponent(row.processName)}`}
+                      className="text-gray-200 font-medium text-sm hover:text-indigo-300 transition-colors truncate max-w-[112px]"
+                      title={`View run history for ${row.processName}`}
+                    >
+                      {row.processName}
+                    </Link>
+                    <button
+                      onClick={() => onSideSheet(row.processName)}
+                      title="Edit bot settings"
+                      className="text-gray-700 hover:text-indigo-400 transition-colors shrink-0 p-0.5 rounded"
+                    >
+                      <Settings2 size={10} />
+                    </button>
+                  </div>
                   {row.isRegisteredOnly && <span className="text-[10px] text-gray-600 block leading-tight mt-0.5">No runs yet</span>}
                 </td>
                 {/* Owner */}
@@ -492,7 +505,7 @@ function Legend() {
         <span className="w-3 h-3 rounded-full border-2 border-dashed border-indigo-600/50 inline-block" />
         Expected today
       </span>
-      <span className="ml-auto text-gray-600">Click process name to edit</span>
+      <span className="ml-auto text-gray-600">Click name for history · ⚙ to edit</span>
     </div>
   );
 }
@@ -577,7 +590,7 @@ export default function MatrixGrid({ matrix, totalDays, startDate, processes, on
     <>
       {/* ── Section header + add button ──────────────────────────────────────── */}
       <div className="flex items-center justify-between mb-3">
-        <span className="text-xs text-gray-600">Click a process name to edit · Dates scroll right</span>
+        <span className="text-xs text-gray-600">Click name for run history · ⚙ to edit · Dates scroll right</span>
         <button onClick={() => setShowAdd(true)}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition-colors">
           <Plus size={12} /> Add Bot

@@ -39,7 +39,9 @@ function dateLabel(offset: number, startRange: Date): string {
 }
 
 // ─────────────────────────────────────────
-// POST /api/logs — ingest a bot run
+// POST /api/logs — smart webhook entry point
+// PAD bots send minimal payload; server handles
+// auto-registration, duration calc, SLA checks.
 // ─────────────────────────────────────────
 export async function POST(request: NextRequest) {
   let payload: LogPayload;
@@ -50,21 +52,22 @@ export async function POST(request: NextRequest) {
   }
 
   const {
-    transactionId,
     processName,
     status,
     startTime,
     endTime,
-    durationSec: rawDuration,
-    volumeCount,
-    remarks,
+    runBy,
+    errorCode,
     errorMessage,
     screenshotPath,
+    volumeCount,
+    remarks,
   } = payload;
 
-  if (!transactionId || !processName || !status || !startTime) {
+  // ── Validate required fields ──
+  if (!processName || !status || !startTime || !endTime) {
     return NextResponse.json(
-      { error: "Missing required fields: transactionId, processName, status, startTime" },
+      { error: "Missing required fields: processName, status, startTime, endTime" },
       { status: 422 }
     );
   }
@@ -72,50 +75,44 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'status must be "Success" or "Failed"' }, { status: 422 });
   }
   if (status === "Failed" && !errorMessage) {
-    return NextResponse.json({ error: "errorMessage is required when status is Failed" }, { status: 422 });
-  }
-
-  // Resolve durationSec
-  let durationSec: number;
-  if (endTime) {
-    durationSec = Math.round(
-      (new Date(endTime).getTime() - new Date(startTime).getTime()) / 1000
-    );
-  } else if (rawDuration !== undefined) {
-    durationSec = rawDuration;
-  } else {
     return NextResponse.json(
-      { error: "Provide either endTime or durationSec" },
+      { error: "errorMessage is required when status is Failed" },
       { status: 422 }
     );
   }
 
-  // SLA checks
-  const processDef = await prisma.processDefinition.findUnique({
+  // ── Server-side duration calculation ──
+  const start = new Date(startTime);
+  const end = new Date(endTime);
+  const durationSec = Math.max(0, Math.round((end.getTime() - start.getTime()) / 1000));
+
+  // ── Auto-register process if it doesn't exist ──
+  const processDef = await prisma.processDefinition.upsert({
     where: { processName },
+    update: {},
+    create: { processName },
   });
 
-  let isLateStart = false;
-  let isSLABreach = false;
-
-  if (processDef) {
-    isSLABreach = durationSec > processDef.slaMaxDuration;
-    const actual = timeToMinutes(
-      `${new Date(startTime).getHours()}:${String(new Date(startTime).getMinutes()).padStart(2, "0")}`
-    );
-    isLateStart = actual > timeToMinutes(processDef.expectedStartTime) + 15;
-  }
+  // ── SLA checks ──
+  const isSLABreach = durationSec > processDef.slaMaxDuration;
+  const actualMinutes = timeToMinutes(
+    `${start.getHours()}:${String(start.getMinutes()).padStart(2, "0")}`
+  );
+  const isLateStart =
+    processDef.botType === "Scheduled" &&
+    actualMinutes > timeToMinutes(processDef.expectedStartTime) + 15;
 
   try {
     const result = await prisma.$transaction(async (tx) => {
       const summary = await tx.summaryLog.create({
         data: {
-          transactionId,
           processName,
           status,
-          startTime: new Date(startTime),
-          endTime: endTime ? new Date(endTime) : null,
+          startTime: start,
+          endTime: end,
           durationSec,
+          runBy: runBy ?? null,
+          errorCode: errorCode ?? null,
           volumeCount: volumeCount ?? 0,
           remarks: remarks ?? "",
           isLateStart,
@@ -126,7 +123,8 @@ export async function POST(request: NextRequest) {
       if (status === "Failed") {
         await tx.errorDetail.create({
           data: {
-            transactionId,
+            transactionId: summary.transactionId,
+            errorCode: errorCode ?? null,
             errorMessage: errorMessage!,
             screenshotPath: screenshotPath ?? "",
           },
@@ -143,18 +141,11 @@ export async function POST(request: NextRequest) {
         transactionId: result.transactionId,
         isLateStart,
         isSLABreach,
+        durationSec,
       },
       { status: 201 }
     );
   } catch (error: unknown) {
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      (error as { code: string }).code === "P2002"
-    ) {
-      return NextResponse.json({ error: "transactionId already exists" }, { status: 409 });
-    }
     console.error("[POST /api/logs]", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }

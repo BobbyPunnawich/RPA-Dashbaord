@@ -10,7 +10,7 @@ function toDateInput(d: Date) {
   return d.toISOString().split("T")[0];
 }
 function defaultRange() {
-  const now = new Date();
+  const now  = new Date();
   const from = new Date(now.getFullYear(), now.getMonth(), 1);
   const to   = new Date(now.getFullYear(), now.getMonth() + 1, 0);
   return { from: toDateInput(from), to: toDateInput(to) };
@@ -24,23 +24,40 @@ interface DashboardData {
   endDate: string;
 }
 
+const EMPTY_STATS: DashboardStats = { totalRuns: 0, successRate: 0, slaCompliance: 100, avgDurationSec: 0 };
+
 export default function DashboardPage() {
-  const [range, setRange]                   = useState(defaultRange);
-  const [search, setSearch]                 = useState("");
+  const [range, setRange]                     = useState(defaultRange);
+  const [search, setSearch]                   = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [data, setData]                     = useState<DashboardData | null>(null);
-  const [processes, setProcesses]           = useState<ProcessDefinition[]>([]);
-  const [loadingDash, setLoadingDash]       = useState(true);
-  const [refreshKey, setRefreshKey]         = useState(0);
+  const [data, setData]                       = useState<DashboardData | null>(null);
+  const [todayStats, setTodayStats]           = useState<DashboardStats | null>(null);
+  const [processes, setProcesses]             = useState<ProcessDefinition[]>([]);
+  const [loadingDash, setLoadingDash]         = useState(true);
+  const [refreshKey, setRefreshKey]           = useState(0);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search), 350);
     return () => clearTimeout(t);
   }, [search]);
 
+  // ── Today-only stats for KPI cards ──────────────────────────────────────────
+  const fetchTodayStats = useCallback(async () => {
+    const today  = toDateInput(new Date());
+    const params = new URLSearchParams({ from: today, to: today });
+    try {
+      const res = await fetch(`/api/logs?${params}`);
+      if (res.ok) setTodayStats((await res.json()).stats);
+    } catch { /* ignore */ }
+  }, []);
+
+  // ── Matrix data (user-selected date range) ───────────────────────────────────
   const fetchDashboard = useCallback(async () => {
     setLoadingDash(true);
-    const params = new URLSearchParams({ from: range.from, to: range.to, ...(debouncedSearch && { search: debouncedSearch }) });
+    const params = new URLSearchParams({
+      from: range.from, to: range.to,
+      ...(debouncedSearch && { search: debouncedSearch }),
+    });
     try {
       const res = await fetch(`/api/logs?${params}`);
       if (res.ok) setData(await res.json());
@@ -56,16 +73,36 @@ export default function DashboardPage() {
     } catch { /* ignore */ }
   }, []);
 
-  useEffect(() => { fetchDashboard(); }, [fetchDashboard, refreshKey]);
-  useEffect(() => { fetchProcesses(); }, [fetchProcesses, refreshKey]);
+  useEffect(() => { fetchTodayStats(); },  [fetchTodayStats,  refreshKey]);
+  useEffect(() => { fetchDashboard(); },   [fetchDashboard,   refreshKey]);
+  useEffect(() => { fetchProcesses(); },   [fetchProcesses,   refreshKey]);
 
   function handleRefresh() { setRefreshKey((k) => k + 1); }
 
-  const stats = data?.stats ?? { totalRuns: 0, successRate: 0, slaCompliance: 100, avgDurationSec: 0 };
+  const todayLabel = new Date().toLocaleDateString("en-US", {
+    weekday: "long", month: "short", day: "numeric",
+  });
 
   return (
     <div className="space-y-6">
-      {/* ── Filters ─────────────────────────────────────────────────────────── */}
+
+      {/* ── Today's KPI Cards ──────────────────────────────────────────────── */}
+      <section>
+        <div className="flex items-center gap-3 mb-3">
+          <h2 className="text-base font-bold text-white">Today&apos;s Summary</h2>
+          <span className="text-xs text-gray-600">{todayLabel}</span>
+          <button
+            onClick={handleRefresh}
+            title="Refresh"
+            className="ml-auto p-2 rounded-xl border border-gray-700 bg-gray-900 text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
+          >
+            <RefreshCw size={15} className={loadingDash ? "animate-spin" : ""} />
+          </button>
+        </div>
+        <KpiCards stats={todayStats ?? EMPTY_STATS} />
+      </section>
+
+      {/* ── Filters ────────────────────────────────────────────────────────── */}
       <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
         <div className="flex items-center gap-2 bg-gray-900 border border-gray-700 rounded-xl px-3 py-2">
           <CalendarDays size={15} className="text-gray-500 shrink-0" />
@@ -93,20 +130,9 @@ export default function DashboardPage() {
             <button onClick={() => setSearch("")} className="text-gray-600 hover:text-gray-300 text-xs leading-none">×</button>
           )}
         </div>
-
-        <button
-          onClick={handleRefresh}
-          title="Refresh data"
-          className="ml-auto p-2 rounded-xl border border-gray-700 bg-gray-900 text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
-        >
-          <RefreshCw size={15} className={loadingDash ? "animate-spin" : ""} />
-        </button>
       </div>
 
-      {/* ── KPI Cards ─────────────────────────────────────────────────────── */}
-      <KpiCards stats={stats} />
-
-      {/* ── Matrix ────────────────────────────────────────────────────────── */}
+      {/* ── Operational Matrix ─────────────────────────────────────────────── */}
       <section>
         <div className="flex items-center gap-3 mb-3">
           <h2 className="text-base font-bold text-white">Operational Matrix</h2>

@@ -11,16 +11,16 @@ export interface ProcessDefinition {
 }
 
 export interface LogPayload {
-  transactionId: string;
   processName: string;
   status: "Success" | "Failed";
-  startTime: string;     // ISO 8601
-  endTime?: string;      // ISO 8601 — if provided, durationSec is auto-calculated
-  durationSec?: number;  // required if endTime not provided
+  startTime: string;      // ISO 8601
+  endTime: string;        // ISO 8601 — durationSec calculated server-side
+  runBy?: string;         // who triggered the run
+  errorCode?: string;     // short error code e.g. "TIMEOUT"
+  errorMessage?: string;  // full error description (required when status="Failed")
+  screenshotPath?: string;
   volumeCount?: number;
   remarks?: string;
-  errorMessage?: string;
-  screenshotPath?: string;
 }
 
 export interface DashboardStats {

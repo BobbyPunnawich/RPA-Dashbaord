@@ -11,18 +11,18 @@ datasource db {
 }
 
 model ProcessDefinition {
-  id                Int          @id @default(autoincrement())
-  processName       String       @unique
-  owner             String       @default("")
-  botType           String       @default("Scheduled") // "Scheduled" | "OnDemand"
-  expectedStartTime String       @default("08:00")     // HH:MM — only used by Scheduled bots
-  slaMaxDuration    Int          @default(3600)         // seconds
-  createdAt         DateTime     @default(now())
+  id                Int      @id @default(autoincrement())
+  processName       String   @unique
+  owner             String   @default("")
+  botType           String   @default("Scheduled") // "Scheduled" | "OnDemand"
+  expectedStartTime String   @default("08:00")     // HH:MM — only used by Scheduled bots
+  slaMaxDuration    Int      @default(1800)         // seconds (default 30 min)
+  createdAt         DateTime @default(now())
 }
 
 model SummaryLog {
   id            Int       @id @default(autoincrement())
-  transactionId String    @unique
+  transactionId String    @unique @default(cuid())
   processName   String
   status        String    // "Success" | "Failed"
   startTime     DateTime
@@ -30,6 +30,8 @@ model SummaryLog {
   durationSec   Float
   volumeCount   Int       @default(0)
   remarks       String    @default("")
+  runBy         String?
+  errorCode     String?
   isLateStart   Boolean   @default(false)
   isSLABreach   Boolean   @default(false)
   createdAt     DateTime  @default(now())
@@ -42,10 +44,11 @@ model SummaryLog {
 }
 
 model ErrorDetail {
-  id             Int    @id @default(autoincrement())
-  transactionId  String @unique
-  errorMessage   String @db.Text
-  screenshotPath String @default("")
+  id             Int     @id @default(autoincrement())
+  transactionId  String  @unique
+  errorCode      String?
+  errorMessage   String  @db.Text
+  screenshotPath String  @default("")
 
   summaryLog SummaryLog @relation(fields: [transactionId], references: [transactionId], onDelete: Cascade)
 }
