@@ -20,9 +20,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               Live
             </span>
             <nav className="ml-auto flex items-center gap-1">
-              <Link href="/" className="px-3 py-1.5 rounded-lg text-sm text-gray-400 hover:text-white hover:bg-gray-800 transition-colors">
-                Dashboard
-              </Link>
               <Link href="/settings" className="px-3 py-1.5 rounded-lg text-sm text-gray-400 hover:text-white hover:bg-gray-800 transition-colors">
                 Bot Settings
               </Link>

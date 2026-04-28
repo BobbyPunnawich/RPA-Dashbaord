@@ -32,6 +32,12 @@ function successPct(cells: MatrixCell[]): string {
   if (!active.length) return "—";
   return `${Math.round((active.filter((c) => c.status === "Success").length / active.length) * 100)}%`;
 }
+function avgDuration(cells: MatrixCell[]): string {
+  const active = cells.filter((c) => c.status !== "None" && c.durationSec !== undefined);
+  if (!active.length) return "—";
+  const avg = active.reduce((sum, c) => sum + (c.durationSec ?? 0), 0) / active.length;
+  return fmtDuration(Math.round(avg));
+}
 function latestStatus(cells: MatrixCell[]): CellStatus {
   return [...cells].reverse().find((c) => c.status !== "None")?.status ?? "None";
 }
@@ -344,7 +350,39 @@ function AddBotDialog({ open, onClose, onRefresh }: { open: boolean; onClose: ()
   );
 }
 
-// ── Bot Table (reusable for each section) ─────────────────────────────────────
+// ── Skeleton ──────────────────────────────────────────────────────────────────
+function TableSkeleton() {
+  return (
+    <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden animate-pulse">
+      {/* Header */}
+      <div className="border-b border-gray-800 flex items-center gap-2 px-4 py-3">
+        <div className="w-28 h-2.5 bg-gray-800 rounded" />
+        <div className="w-12 h-2.5 bg-gray-800 rounded" />
+        <div className="w-10 h-2.5 bg-gray-800 rounded" />
+        <div className="w-10 h-2.5 bg-gray-800 rounded" />
+        <div className="flex-1" />
+        {Array.from({ length: 14 }).map((_, i) => (
+          <div key={i} className="w-8 h-2.5 bg-gray-800 rounded mx-0.5" />
+        ))}
+      </div>
+      {/* Rows */}
+      {Array.from({ length: 5 }).map((_, row) => (
+        <div key={row} className="border-b border-gray-800/40 flex items-center gap-2 px-4 py-3.5">
+          <div className="w-32 h-3 bg-gray-800 rounded" />
+          <div className="w-12 h-3 bg-gray-800 rounded" />
+          <div className="w-10 h-3 bg-gray-800 rounded" />
+          <div className="w-10 h-3 bg-gray-800 rounded" />
+          <div className="flex-1" />
+          {Array.from({ length: 14 }).map((_, i) => (
+            <div key={i} className="w-8 h-8 bg-gray-800/60 rounded-md mx-0.5" />
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Bot Table ─────────────────────────────────────────────────────────────────
 interface RowData { processName: string; cells: MatrixCell[]; isRegisteredOnly: boolean }
 
 interface BotTableProps {
@@ -362,10 +400,10 @@ interface BotTableProps {
 function BotTable({ rows, showStartCol, todayIndex, todayInRange, processDefMap, onSideSheet, onError, onTipEnter, onTipLeave }: BotTableProps) {
   if (!rows.length) return null;
 
-  // Sticky left offsets depend on whether Start column is shown
+  // Sticky left offsets (Process=152 | Start?=68 | SLA=60 | Avg=72 | %=48)
   const L = showStartCol
-    ? { owner: 152, start: 260, sla: 328, status: 388, pct: 472 }
-    : { owner: 152,             sla: 260, status: 320, pct: 404 };
+    ? { start: 152, sla: 220, avg: 280, pct: 352 }
+    : {             sla: 152, avg: 212, pct: 284 };
 
   return (
     <div className="bg-gray-900 rounded-t-xl border border-gray-800 border-b-0 overflow-x-auto">
@@ -375,10 +413,6 @@ function BotTable({ rows, showStartCol, todayIndex, todayInRange, processDefMap,
             {/* Process */}
             <th className="text-left px-4 py-2.5 sticky left-0 bg-gray-900 z-20 w-[152px] min-w-[152px]">
               <span className="text-[11px] font-semibold uppercase tracking-widest text-gray-400">Process</span>
-            </th>
-            {/* Owner */}
-            <th style={{ left: L.owner }} className="px-3 py-2.5 text-left sticky bg-gray-900 z-20 w-[108px] min-w-[108px]">
-              <span className="text-[11px] font-semibold uppercase tracking-widest text-gray-400">Owner</span>
             </th>
             {/* Start — Scheduled only */}
             {showStartCol && (
@@ -390,9 +424,9 @@ function BotTable({ rows, showStartCol, todayIndex, todayInRange, processDefMap,
             <th style={{ left: L.sla }} className="px-2 py-2.5 text-left sticky bg-gray-900 z-20 w-[60px] min-w-[60px]">
               <span className="text-[11px] font-semibold uppercase tracking-widest text-gray-400">SLA</span>
             </th>
-            {/* Status */}
-            <th style={{ left: L.status }} className="px-2 py-2.5 text-left sticky bg-gray-900 z-20 w-[84px] min-w-[84px]">
-              <span className="text-[11px] font-semibold uppercase tracking-widest text-gray-400">Status</span>
+            {/* Avg Run Time */}
+            <th style={{ left: L.avg }} className="px-2 py-2.5 text-left sticky bg-gray-900 z-20 w-[72px] min-w-[72px]">
+              <span className="text-[11px] font-semibold uppercase tracking-widest text-gray-400">Avg</span>
             </th>
             {/* Success % + divider */}
             <th style={{ left: L.pct }} className="px-2 py-2.5 text-center sticky bg-gray-900 z-20 w-[48px] min-w-[48px] border-r border-gray-700/60">
@@ -409,13 +443,12 @@ function BotTable({ rows, showStartCol, todayIndex, todayInRange, processDefMap,
         </thead>
         <tbody>
           {rows.map((row, i) => {
-            const pct    = successPct(row.cells);
-            const pctNum = pct === "—" ? null : parseInt(pct);
+            const pct      = successPct(row.cells);
+            const pctNum   = pct === "—" ? null : parseInt(pct);
             const pctColor = pctNum === null ? "text-gray-600" : pctNum >= 90 ? "text-emerald-400" : pctNum >= 70 ? "text-yellow-400" : "text-red-400";
-            const ls     = latestStatus(row.cells);
-            const lsCfg  = STATUS_CFG[ls];
-            const def    = processDefMap.get(row.processName);
-            const rowBg  = i % 2 === 0 ? "" : "bg-gray-800/25";
+            const avg      = avgDuration(row.cells);
+            const def      = processDefMap.get(row.processName);
+            const rowBg    = i % 2 === 0 ? "" : "bg-gray-800/25";
 
             return (
               <tr key={row.processName}>
@@ -439,12 +472,6 @@ function BotTable({ rows, showStartCol, todayIndex, todayInRange, processDefMap,
                   </div>
                   {row.isRegisteredOnly && <span className="text-[10px] text-gray-600 block leading-tight mt-0.5">No runs yet</span>}
                 </td>
-                {/* Owner */}
-                <td style={{ left: L.owner }} className="px-3 py-2.5 sticky z-10 w-[108px] min-w-[108px] bg-gray-900">
-                  <span className="text-[11px] text-gray-300 truncate block max-w-[96px]">
-                    {def?.owner || <span className="text-gray-600 italic">—</span>}
-                  </span>
-                </td>
                 {/* Start */}
                 {showStartCol && (
                   <td style={{ left: L.start }} className="px-2 py-2.5 sticky z-10 w-[68px] min-w-[68px] bg-gray-900">
@@ -455,11 +482,9 @@ function BotTable({ rows, showStartCol, todayIndex, todayInRange, processDefMap,
                 <td style={{ left: L.sla }} className="px-2 py-2.5 sticky z-10 w-[60px] min-w-[60px] bg-gray-900">
                   <span className="text-[11px] text-gray-400">{def ? fmtDuration(def.slaMaxDuration) : <span className="text-gray-700">—</span>}</span>
                 </td>
-                {/* Status */}
-                <td style={{ left: L.status }} className="px-2 py-2.5 sticky z-10 w-[84px] min-w-[84px] bg-gray-900">
-                  {ls === "None"
-                    ? <span className="text-[10px] text-gray-700">No runs</span>
-                    : <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold border ${lsCfg.bg} ${lsCfg.text} ${lsCfg.border}`}>{lsCfg.label}</span>}
+                {/* Avg Run Time */}
+                <td style={{ left: L.avg }} className="px-2 py-2.5 sticky z-10 w-[72px] min-w-[72px] bg-gray-900">
+                  <span className="text-[11px] font-mono text-gray-400">{avg}</span>
                 </td>
                 {/* Success % */}
                 <td style={{ left: L.pct }} className={`px-2 py-2.5 text-center text-xs font-bold sticky z-10 w-[48px] min-w-[48px] border-r border-gray-700/60 bg-gray-900 ${pctColor}`}>
@@ -488,7 +513,7 @@ function BotTable({ rows, showStartCol, todayIndex, todayInRange, processDefMap,
   );
 }
 
-// ── Legend (shared) ───────────────────────────────────────────────────────────
+// ── Legend ────────────────────────────────────────────────────────────────────
 function Legend() {
   return (
     <div className="flex flex-wrap items-center gap-4 px-4 py-3 bg-gray-900 border border-gray-800 rounded-b-xl border-t-0 text-[11px] text-gray-500">
@@ -517,13 +542,14 @@ interface Props {
   startDate: string;
   processes: ProcessDefinition[];
   onRefresh: () => void;
+  loading?: boolean;
 }
 
-export default function MatrixGrid({ matrix, totalDays, startDate, processes, onRefresh }: Props) {
-  const [tooltip,    setTooltip]    = useState<TooltipState | null>(null);
-  const [errorInfo,  setErrorInfo]  = useState<ErrorInfo | null>(null);
-  const [sideSheet,  setSideSheet]  = useState<{ processName: string } | null>(null);
-  const [showAdd,    setShowAdd]    = useState(false);
+export default function MatrixGrid({ matrix, totalDays, startDate, processes, onRefresh, loading }: Props) {
+  const [tooltip,   setTooltip]   = useState<TooltipState | null>(null);
+  const [errorInfo, setErrorInfo] = useState<ErrorInfo | null>(null);
+  const [sideSheet, setSideSheet] = useState<{ processName: string } | null>(null);
+  const [showAdd,   setShowAdd]   = useState(false);
 
   const processDefMap = new Map(processes.map((p) => [p.processName, p]));
 
@@ -539,13 +565,23 @@ export default function MatrixGrid({ matrix, totalDays, startDate, processes, on
     setTooltip({ cell, processName, processDef: processDefMap.get(processName), x: rect.left + rect.width / 2, y: rect.top, todayExpected: cell.dayIndex === todayIndex && todayInRange });
   }
 
+  // Compute dateLabel matching server logic, so empty rows use consistent labels
+  function makeDateLabel(i: number): string {
+    const d = new Date(rangeStart.getTime() + i * 86_400_000);
+    const sameMonth = d.getMonth() === rangeStart.getMonth();
+    return sameMonth ? String(d.getDate()) : `${d.getMonth() + 1}/${d.getDate()}`;
+  }
+
   // Build allRows: matrix rows + registered-only rows
   const matrixNames = new Set(matrix.map((r) => r.processName));
   const emptyRow = (p: ProcessDefinition): RowData => ({
     processName: p.processName,
     isRegisteredOnly: true,
     cells: Array.from({ length: totalDays }, (_, i) => ({
-      dayIndex: i + 1, dateLabel: String(i + 1), status: "None" as CellStatus, runCount: 0,
+      dayIndex: i + 1,
+      dateLabel: makeDateLabel(i),
+      status: "None" as CellStatus,
+      runCount: 0,
     })),
   });
 
@@ -554,7 +590,7 @@ export default function MatrixGrid({ matrix, totalDays, startDate, processes, on
     ...processes.filter((p) => !matrixNames.has(p.processName)).map(emptyRow),
   ];
 
-  // Split by botType — unregistered processes default to Scheduled
+  // Split by botType
   const scheduledRows = allRows.filter((r) => {
     const def = processDefMap.get(r.processName);
     return !def || def.botType === "Scheduled";
@@ -574,6 +610,15 @@ export default function MatrixGrid({ matrix, totalDays, startDate, processes, on
     onTipLeave: () => setTooltip(null),
   };
 
+  // Show skeleton while loading
+  if (loading) {
+    return (
+      <div className="space-y-5">
+        <TableSkeleton />
+      </div>
+    );
+  }
+
   if (isEmpty) {
     return (
       <>
@@ -588,7 +633,7 @@ export default function MatrixGrid({ matrix, totalDays, startDate, processes, on
 
   return (
     <>
-      {/* ── Section header + add button ──────────────────────────────────────── */}
+      {/* Section header + add button */}
       <div className="flex items-center justify-between mb-3">
         <span className="text-xs text-gray-600">Click name for run history · ⚙ to edit · Dates scroll right</span>
         <button onClick={() => setShowAdd(true)}
@@ -597,7 +642,7 @@ export default function MatrixGrid({ matrix, totalDays, startDate, processes, on
         </button>
       </div>
 
-      {/* ── Scheduled Bots ───────────────────────────────────────────────────── */}
+      {/* Scheduled Bots */}
       {scheduledRows.length > 0 && (
         <div className="mb-1">
           <div className="flex items-center gap-2 px-1 mb-1.5">
@@ -610,7 +655,7 @@ export default function MatrixGrid({ matrix, totalDays, startDate, processes, on
         </div>
       )}
 
-      {/* ── On-Demand Bots ───────────────────────────────────────────────────── */}
+      {/* On-Demand Bots */}
       {onDemandRows.length > 0 && (
         <div className={scheduledRows.length > 0 ? "mt-5" : ""}>
           <div className="flex items-center gap-2 px-1 mb-1.5">

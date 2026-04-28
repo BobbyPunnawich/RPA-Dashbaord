@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { Search, RefreshCw, CalendarDays } from "lucide-react";
-import KpiCards from "@/components/KpiCards";
+import TodaySummary from "@/components/TodaySummary";
 import MatrixGrid from "@/components/MatrixGrid";
 import { DashboardStats, ProcessMatrix, ProcessDefinition } from "@/types/rpa";
 
@@ -27,28 +27,36 @@ interface DashboardData {
 const EMPTY_STATS: DashboardStats = { totalRuns: 0, successRate: 0, slaCompliance: 100, avgDurationSec: 0 };
 
 export default function DashboardPage() {
-  const [range, setRange]                     = useState(defaultRange);
-  const [search, setSearch]                   = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [data, setData]                       = useState<DashboardData | null>(null);
-  const [todayStats, setTodayStats]           = useState<DashboardStats | null>(null);
-  const [processes, setProcesses]             = useState<ProcessDefinition[]>([]);
-  const [loadingDash, setLoadingDash]         = useState(true);
-  const [refreshKey, setRefreshKey]           = useState(0);
+  const [range, setRange]                       = useState(defaultRange);
+  const [search, setSearch]                     = useState("");
+  const [debouncedSearch, setDebouncedSearch]   = useState("");
+  const [data, setData]                         = useState<DashboardData | null>(null);
+  const [todayStats, setTodayStats]             = useState<DashboardStats | null>(null);
+  const [todayMatrix, setTodayMatrix]           = useState<ProcessMatrix[] | null>(null);
+  const [processes, setProcesses]               = useState<ProcessDefinition[]>([]);
+  const [loadingDash, setLoadingDash]           = useState(true);
+  const [loadingToday, setLoadingToday]         = useState(true);
+  const [refreshKey, setRefreshKey]             = useState(0);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search), 350);
     return () => clearTimeout(t);
   }, [search]);
 
-  // ── Today-only stats for KPI cards ──────────────────────────────────────────
+  // ── Today-only stats + matrix for KPI cards + chart ─────────────────────────
   const fetchTodayStats = useCallback(async () => {
+    setLoadingToday(true);
     const today  = toDateInput(new Date());
     const params = new URLSearchParams({ from: today, to: today });
     try {
       const res = await fetch(`/api/logs?${params}`);
-      if (res.ok) setTodayStats((await res.json()).stats);
+      if (res.ok) {
+        const json = await res.json();
+        setTodayStats(json.stats);
+        setTodayMatrix(json.matrix);
+      }
     } catch { /* ignore */ }
+    finally { setLoadingToday(false); }
   }, []);
 
   // ── Matrix data (user-selected date range) ───────────────────────────────────
@@ -86,7 +94,7 @@ export default function DashboardPage() {
   return (
     <div className="space-y-6">
 
-      {/* ── Today's KPI Cards ──────────────────────────────────────────────── */}
+      {/* ── Today's Summary ────────────────────────────────────────────────── */}
       <section>
         <div className="flex items-center gap-3 mb-3">
           <h2 className="text-base font-bold text-white">Today&apos;s Summary</h2>
@@ -99,7 +107,12 @@ export default function DashboardPage() {
             <RefreshCw size={15} className={loadingDash ? "animate-spin" : ""} />
           </button>
         </div>
-        <KpiCards stats={todayStats ?? EMPTY_STATS} />
+        <TodaySummary
+          stats={todayStats ?? EMPTY_STATS}
+          todayMatrix={todayMatrix}
+          processes={processes}
+          loading={loadingToday}
+        />
       </section>
 
       {/* ── Filters ────────────────────────────────────────────────────────── */}
@@ -122,7 +135,7 @@ export default function DashboardPage() {
         <div className="flex items-center gap-2 bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 flex-1 max-w-xs">
           <Search size={14} className="text-gray-500 shrink-0" />
           <input
-            type="text" placeholder="Search by bot name or owner…"
+            type="text" placeholder="Search bots…"
             value={search} onChange={(e) => setSearch(e.target.value)}
             className="bg-transparent text-sm text-gray-200 placeholder-gray-600 focus:outline-none w-full"
           />
@@ -145,6 +158,7 @@ export default function DashboardPage() {
           startDate={data?.startDate ?? new Date(range.from).toISOString()}
           processes={processes}
           onRefresh={handleRefresh}
+          loading={loadingDash}
         />
       </section>
 
