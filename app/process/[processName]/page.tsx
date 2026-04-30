@@ -4,6 +4,8 @@ import React, { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, ChevronDown, ChevronRight, RefreshCw, Pencil, Check, X } from "lucide-react";
 import { ProcessDefinition } from "@/types/rpa";
+import ErrorBubbleChart from "@/components/ErrorBubbleChart";
+import DailyRunChart from "@/components/DailyRunChart";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface ErrorDetailRecord {
@@ -100,17 +102,14 @@ export default function ProcessBacklogPage() {
     }
   }, [processName]);
 
-  // Fetch today's run count. PAD stores timestamps with BE year (พ.ศ. e.g. 2569).
-  // We must send the BE year so the server's date boundaries match stored data.
+  // Fetch today's run count using Gregorian (CE) date.
   const fetchTodayCount = useCallback(async () => {
     const now = new Date();
-    // getUTCFullYear() always returns AD; add 543 to match stored BE year.
-    const beYear = now.getUTCFullYear() + 543;
     const today =
-      `${beYear}-` +
+      `${now.getUTCFullYear()}-` +
       `${String(now.getUTCMonth() + 1).padStart(2, "0")}-` +
       `${String(now.getUTCDate()).padStart(2, "0")}`;
-    console.log("[fetchTodayCount] BE today string sent to API:", today);
+    console.log("[fetchTodayCount] today string sent to API:", today);
     try {
       const res = await fetch(
         `/api/runs/${encodeURIComponent(processName)}?from=${today}&to=${today}`
@@ -277,6 +276,14 @@ export default function ProcessBacklogPage() {
           )}
         </div>
       </div>
+
+      {/* ── Charts ─────────────────────────────────────────────────────────── */}
+      {!loading && runs.length > 0 && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <DailyRunChart runs={runs} />
+          <ErrorBubbleChart runs={runs} />
+        </div>
+      )}
 
       {/* ── Run table ───────────────────────────────────────────────────────── */}
       {loading ? (

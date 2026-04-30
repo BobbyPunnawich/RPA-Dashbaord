@@ -1,7 +1,10 @@
 "use client";
 
+import { useState } from "react";
+import { ChevronDown } from "lucide-react";
 import { PieChart, Pie, Cell, Tooltip } from "recharts";
 import { DashboardStats, ProcessMatrix, ProcessDefinition, CellStatus } from "@/types/rpa";
+import BotRunDetail from "@/components/BotRunDetail";
 
 // Aligned with API breakdown keys and matrix cell statuses
 const BREAKDOWN_CFG: {
@@ -76,7 +79,20 @@ interface Props {
   loading: boolean;
 }
 
+type RunFilter = "All" | "Success" | "LateStart" | "SLABreach" | "Failed";
+
+const FILTER_CFG: { key: RunFilter; label: string; activeClass: string }[] = [
+  { key: "All",       label: "All",        activeClass: "bg-gray-700 text-gray-100 border-gray-500"         },
+  { key: "Success",   label: "Success",    activeClass: "bg-emerald-900/60 text-emerald-300 border-emerald-600" },
+  { key: "LateStart", label: "Late Start", activeClass: "bg-yellow-900/60  text-yellow-300  border-yellow-600"  },
+  { key: "SLABreach", label: "SLA Breach", activeClass: "bg-orange-900/60  text-orange-300  border-orange-600"  },
+  { key: "Failed",    label: "Failed",     activeClass: "bg-red-900/60     text-red-300     border-red-600"      },
+];
+
 export default function TodaySummary({ stats, todayMatrix, processes, loading }: Props) {
+  const [runFilter,    setRunFilter]    = useState<RunFilter>("All");
+  const [expandedBot,  setExpandedBot]  = useState<string | null>(null);
+
   if (loading) return <Skeleton />;
 
   const processDefMap = new Map(processes.map((p) => [p.processName, p]));
@@ -110,11 +126,22 @@ export default function TodaySummary({ stats, todayMatrix, processes, loading }:
         (STATUS_PRIORITY[b.cell.status] ?? 0) - (STATUS_PRIORITY[a.cell.status] ?? 0)
     );
 
-  // Explicit sum of every bot's runCount — identical to what each N× card shows
   const totalTodayRuns = todayRuns.reduce((sum, { cell }) => sum + cell.runCount, 0);
 
-  const ranNames    = new Set(todayRuns.map((r) => r.processName));
+  const ranNames     = new Set(todayRuns.map((r) => r.processName));
   const pendingCount = processes.filter((p) => !ranNames.has(p.processName)).length;
+
+  // Per-status bot counts for filter chip labels
+  const filterCounts: Record<RunFilter, number> = {
+    All:       todayRuns.length,
+    Success:   todayRuns.filter((r) => r.cell.status === "Success").length,
+    LateStart: todayRuns.filter((r) => r.cell.status === "LateStart").length,
+    SLABreach: todayRuns.filter((r) => r.cell.status === "SLABreach").length,
+    Failed:    todayRuns.filter((r) => r.cell.status === "Failed").length,
+  };
+
+  const visibleRuns =
+    runFilter === "All" ? todayRuns : todayRuns.filter((r) => r.cell.status === runFilter);
 
   // Exact sub-text from breakdown, not back-calculated from rounded percentages
   const failedCount    = bd?.failed    ?? 0;
@@ -205,74 +232,109 @@ export default function TodaySummary({ stats, todayMatrix, processes, loading }:
       {/* ── Row 2: Per-bot run list ──────────────────────────────────────── */}
       {todayRuns.length > 0 && (
         <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
-          <div className="px-4 py-2.5 border-b border-gray-800 flex items-center justify-between">
-            <div className="flex items-center gap-2">
+          {/* Header + filter chips */}
+          <div className="px-4 py-2.5 border-b border-gray-800 flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2 shrink-0">
               <span className="text-xs font-semibold uppercase tracking-widest text-gray-400">
                 Today&apos;s Runs
               </span>
-              {/* totalTodayRuns = sum of each bot's runCount — same as donut center */}
               <span className="text-[10px] text-gray-600 bg-gray-800 px-1.5 py-0.5 rounded-full">
                 {totalTodayRuns} run{totalTodayRuns !== 1 ? "s" : ""} · {todayRuns.length} bot{todayRuns.length !== 1 ? "s" : ""}
               </span>
+              {pendingCount > 0 && (
+                <span className="text-[10px] text-gray-600">
+                  · {pendingCount} pending
+                </span>
+              )}
             </div>
-            {pendingCount > 0 && (
-              <span className="text-[10px] text-gray-600">
-                {pendingCount} bot{pendingCount !== 1 ? "s" : ""} not run yet
-              </span>
-            )}
+
+            {/* Status filter chips */}
+            <div className="flex items-center gap-1.5 flex-wrap ml-auto">
+              {FILTER_CFG.filter((f) => f.key === "All" || filterCounts[f.key] > 0).map((f) => (
+                <button
+                  key={f.key}
+                  onClick={() => setRunFilter(f.key)}
+                  className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border transition-colors ${
+                    runFilter === f.key
+                      ? f.activeClass
+                      : "bg-transparent text-gray-500 border-gray-700 hover:border-gray-500 hover:text-gray-300"
+                  }`}
+                >
+                  {f.label}
+                  {f.key !== "All" && (
+                    <span className="ml-1 opacity-70">{filterCounts[f.key]}</span>
+                  )}
+                </button>
+              ))}
+            </div>
           </div>
-          <div className="divide-y divide-gray-800/40 max-h-52 overflow-y-auto">
-            {todayRuns.map(({ processName, cell, def }) => {
+
+          <div className="divide-y divide-gray-800/40">
+            {visibleRuns.length === 0 ? (
+              <p className="text-xs text-gray-600 px-4 py-3 italic">No {runFilter} runs today.</p>
+            ) : visibleRuns.map(({ processName, cell, def }) => {
+              const isOpen = expandedBot === processName;
               const slaPct =
                 def && cell.durationSec !== undefined
                   ? Math.min((cell.durationSec / def.slaMaxDuration) * 100, 100)
                   : null;
-              const barBg = BAR_COLOR[cell.status] ?? "bg-gray-600";
+              const barBg    = BAR_COLOR[cell.status] ?? "bg-gray-600";
               const cfgEntry = BREAKDOWN_CFG.find((c) => c.status === cell.status);
               return (
-                <div key={processName} className="px-4 py-2.5 flex items-center gap-3">
-                  {/* Bot name */}
-                  <span className="text-sm text-gray-200 truncate w-36 shrink-0" title={processName}>
-                    {processName}
-                  </span>
-
-                  {/* Run count — always visible as a card */}
-                  <span className="shrink-0 flex items-center justify-center min-w-[36px] h-6 bg-gray-800 border border-gray-700 rounded-md px-1.5 text-[11px] font-bold text-gray-300">
-                    {cell.runCount}×
-                  </span>
-
-                  {/* Duration bar vs SLA */}
-                  {slaPct !== null ? (
-                    <div className="flex-1 flex items-center gap-2 min-w-0">
-                      <div className="flex-1 h-1.5 bg-gray-800 rounded-full overflow-hidden">
-                        <div
-                          className={`h-full rounded-full ${barBg}`}
-                          style={{ width: `${slaPct}%` }}
-                        />
-                      </div>
-                      <span className="text-xs font-mono text-gray-400 shrink-0 whitespace-nowrap">
-                        {fmtDuration(cell.durationSec!)}
-                        {def && (
-                          <span className="text-gray-700"> / {fmtDuration(def.slaMaxDuration)}</span>
-                        )}
-                      </span>
-                    </div>
-                  ) : (
-                    <div className="flex-1" />
-                  )}
-
-                  {/* Status badge */}
-                  {cfgEntry && (
-                    <span className={`shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded border ${cfgEntry.bg} ${cfgEntry.text} ${cfgEntry.border}`}>
-                      {cfgEntry.label}
+                <div key={processName}>
+                  {/* ── Bot summary row (click to expand) ── */}
+                  <div
+                    className="px-4 py-2.5 flex items-center gap-3 cursor-pointer hover:bg-gray-800/30 transition-colors"
+                    onClick={() => setExpandedBot(isOpen ? null : processName)}
+                  >
+                    {/* Bot name */}
+                    <span className="text-sm text-gray-200 truncate w-36 shrink-0" title={processName}>
+                      {processName}
                     </span>
-                  )}
+
+                    {/* Run count */}
+                    <span className="shrink-0 flex items-center justify-center min-w-[36px] h-6 bg-gray-800 border border-gray-700 rounded-md px-1.5 text-[11px] font-bold text-gray-300">
+                      {cell.runCount}×
+                    </span>
+
+                    {/* Duration bar vs SLA */}
+                    {slaPct !== null ? (
+                      <div className="flex-1 flex items-center gap-2 min-w-0">
+                        <div className="flex-1 h-1.5 bg-gray-800 rounded-full overflow-hidden">
+                          <div className={`h-full rounded-full ${barBg}`} style={{ width: `${slaPct}%` }} />
+                        </div>
+                        <span className="text-xs font-mono text-gray-400 shrink-0 whitespace-nowrap">
+                          {fmtDuration(cell.durationSec!)}
+                          {def && <span className="text-gray-700"> / {fmtDuration(def.slaMaxDuration)}</span>}
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="flex-1" />
+                    )}
+
+                    {/* Status badge */}
+                    {cfgEntry && (
+                      <span className={`shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded border ${cfgEntry.bg} ${cfgEntry.text} ${cfgEntry.border}`}>
+                        {cfgEntry.label}
+                      </span>
+                    )}
+
+                    {/* Expand chevron */}
+                    <ChevronDown
+                      size={13}
+                      className={`shrink-0 text-gray-600 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`}
+                    />
+                  </div>
+
+                  {/* ── Expanded: bubble chart + filter + run list ── */}
+                  {isOpen && <BotRunDetail processName={processName} />}
                 </div>
               );
             })}
           </div>
         </div>
       )}
+
     </div>
   );
 }

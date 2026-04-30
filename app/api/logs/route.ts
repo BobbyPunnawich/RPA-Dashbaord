@@ -22,6 +22,22 @@ function parseTimestamp(iso: string): Date {
   return new Date(iso);
 }
 
+/**
+ * Some Windows machines send timestamps in Buddhist Era (BE) where the year is
+ * AD + 543 (e.g. 2569 instead of 2026). Detect this by checking whether the
+ * parsed year is >= 2500 and subtract 543 to convert back to Gregorian (CE).
+ * The year is corrected directly in the ISO string before re-parsing so the
+ * time component and TZ designator are preserved exactly.
+ */
+function normalizeBEtoCE(dateInput: string): Date {
+  const d = parseTimestamp(dateInput);
+  if (d.getFullYear() >= 2500) {
+    const correctedYear = d.getFullYear() - 543;
+    return parseTimestamp(dateInput.replace(/^\d{4}/, String(correctedYear)));
+  }
+  return d;
+}
+
 /** Return the higher-priority status */
 const STATUS_PRIORITY: Record<CellStatus, number> = {
   None: 0,
@@ -117,8 +133,8 @@ export async function POST(request: NextRequest) {
   }
 
   // ── Server-side duration & SLA calculation ──
-  const start = parseTimestamp(startTime);
-  const end   = parseTimestamp(endTime);
+  const start = normalizeBEtoCE(startTime);
+  const end   = normalizeBEtoCE(endTime);
   const durationSec = Math.max(0, Math.round((end.getTime() - start.getTime()) / 1000));
 
   // ── Auto-register process if it doesn't exist ──

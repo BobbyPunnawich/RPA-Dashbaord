@@ -31,7 +31,7 @@ export default function KpiCards({ stats }: KpiCardsProps) {
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
       <KpiCard
         label="Total Runs"
-        value={stats.totalRuns.toLocaleString()}
+        value={stats.totalRuns.toLocaleString("en-US")}
         sub={`${failed} failed`}
         accent="border-gray-600 text-gray-100"
       />

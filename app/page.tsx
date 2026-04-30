@@ -1,23 +1,19 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { Search, RefreshCw, CalendarDays } from "lucide-react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { Search, RefreshCw, CalendarDays, AlertTriangle, X } from "lucide-react";
 import TodaySummary from "@/components/TodaySummary";
 import MatrixGrid from "@/components/MatrixGrid";
+import IssuesTable, { IssueErrorInfo } from "@/components/IssuesTable";
+import ErrorModal from "@/components/ErrorModal";
 import { DashboardStats, ProcessMatrix, ProcessDefinition } from "@/types/rpa";
 
-// Date input state always holds AD (Gregorian) "YYYY-MM-DD" so HTML date pickers work correctly.
-// PAD stores timestamps with Buddhist Era year (พ.ศ. = AD + 543), e.g. "2569-04-29T13:18:00Z".
-// toBEParam() converts an AD date string to BE before it is sent to the API.
+// Date input state holds AD (Gregorian) "YYYY-MM-DD". All DB records are CE after the fix-dates migration.
 function toAdDateStr(d: Date) {
   const y   = d.getUTCFullYear();
   const m   = String(d.getUTCMonth() + 1).padStart(2, "0");
   const day = String(d.getUTCDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
-}
-function toBEParam(adDate: string) {
-  const [y, m, d] = adDate.split("-");
-  return `${parseInt(y, 10) + 543}-${m}-${d}`;
 }
 function defaultRange() {
   const now = new Date();
@@ -38,6 +34,12 @@ interface DashboardData {
   allTimeCounts: Record<string, number>;
 }
 
+interface AlertToast {
+  id: string;
+  message: string;
+  names: string[];
+}
+
 const EMPTY_STATS: DashboardStats = {
   totalRuns: 0, successRate: 0, slaCompliance: 100, avgDurationSec: 0,
   breakdown: { success: 0, lateStart: 0, slaBreach: 0, failed: 0, slaIssues: 0 },
@@ -54,6 +56,10 @@ export default function DashboardPage() {
   const [loadingDash, setLoadingDash]           = useState(true);
   const [loadingToday, setLoadingToday]         = useState(true);
   const [refreshKey, setRefreshKey]             = useState(0);
+  const [toasts, setToasts]                     = useState<AlertToast[]>([]);
+  const [modalError, setModalError]             = useState<IssueErrorInfo | null>(null);
+  const seenIssueIds                            = useRef<Set<string>>(new Set());
+  const hasLoadedOnce                           = useRef(false);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search), 350);
@@ -63,8 +69,8 @@ export default function DashboardPage() {
   // ── Today-only stats + matrix for KPI cards + chart ─────────────────────────
   const fetchTodayStats = useCallback(async () => {
     setLoadingToday(true);
-    const todayBE = toBEParam(toAdDateStr(new Date())); // AD→BE for DB query
-    const params  = new URLSearchParams({ from: todayBE, to: todayBE });
+    const today  = toAdDateStr(new Date());
+    const params = new URLSearchParams({ from: today, to: today });
     try {
       const res = await fetch(`/api/logs?${params}`);
       if (res.ok) {
@@ -83,7 +89,7 @@ export default function DashboardPage() {
   const fetchDashboard = useCallback(async () => {
     setLoadingDash(true);
     const params = new URLSearchParams({
-      from: toBEParam(range.from), to: toBEParam(range.to), // AD→BE for DB query
+      from: range.from, to: range.to,
       ...(debouncedSearch && { search: debouncedSearch }),
     });
     try {
@@ -104,6 +110,56 @@ export default function DashboardPage() {
   useEffect(() => { fetchTodayStats(); },  [fetchTodayStats,  refreshKey]);
   useEffect(() => { fetchDashboard(); },   [fetchDashboard,   refreshKey]);
   useEffect(() => { fetchProcesses(); },   [fetchProcesses,   refreshKey]);
+
+  // Request browser notification permission once on mount
+  useEffect(() => {
+    if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+  }, []);
+
+  // Detect new issues when today's matrix updates
+  useEffect(() => {
+    if (!todayMatrix) return;
+
+    const newNames: string[] = [];
+    for (const { processName, cells } of todayMatrix) {
+      for (const cell of cells) {
+        if (cell.status === "None" || cell.status === "Success") continue;
+        if (!cell.transactionId) continue;
+        if (seenIssueIds.current.has(cell.transactionId)) continue;
+        seenIssueIds.current.add(cell.transactionId);
+        if (hasLoadedOnce.current) newNames.push(processName);
+      }
+    }
+    hasLoadedOnce.current = true;
+
+    if (newNames.length === 0) return;
+
+    const message =
+      newNames.length === 1
+        ? `${newNames[0]} has a new issue`
+        : `${newNames.length} bots have new issues`;
+
+    // Browser notification
+    if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
+      new Notification("RPA Control Center — Issue Detected", {
+        body: message,
+        icon: "/favicon.ico",
+      });
+    }
+
+    // In-app toast
+    const toastId = `${Date.now()}`;
+    setToasts((prev) => [...prev, { id: toastId, message, names: newNames }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== toastId));
+    }, 7000);
+  }, [todayMatrix]);
+
+  function dismissToast(id: string) {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }
 
   function handleRefresh() { setRefreshKey((k) => k + 1); }
 
@@ -136,6 +192,16 @@ export default function DashboardPage() {
           loading={loadingToday}
         />
       </section>
+
+      {/* ── Issues Summary ─────────────────────────────────────────────────── */}
+      {!loadingToday && (
+        <IssuesTable
+          todayMatrix={todayMatrix}
+          processes={processes}
+          stats={todayStats}
+          onErrorClick={setModalError}
+        />
+      )}
 
       {/* ── Filters ────────────────────────────────────────────────────────── */}
       <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
@@ -171,7 +237,7 @@ export default function DashboardPage() {
       <section>
         <div className="flex items-center gap-3 mb-3">
           <h2 className="text-base font-bold text-white">Operational Matrix</h2>
-          <span className="text-xs text-gray-600">{toBEParam(range.from)} → {toBEParam(range.to)}</span>
+          <span className="text-xs text-gray-600">{range.from} → {range.to}</span>
           {loadingDash && <span className="text-xs text-indigo-400 animate-pulse">Updating…</span>}
         </div>
         <MatrixGrid
@@ -190,6 +256,48 @@ export default function DashboardPage() {
       {!data && !loadingDash && (
         <div className="bg-yellow-900/30 border border-yellow-700 rounded-xl px-5 py-4 text-sm text-yellow-300">
           <strong>Could not load dashboard data.</strong> Verify <code>DATABASE_URL</code> in <code>.env</code>.
+        </div>
+      )}
+
+      {/* ── Error Detail Modal ─────────────────────────────────────────────── */}
+      {modalError && (
+        <ErrorModal
+          transactionId={modalError.transactionId}
+          processName={modalError.processName}
+          day={1}
+          errorMessage={modalError.errorMessage}
+          screenshotPath={modalError.screenshotPath}
+          onClose={() => setModalError(null)}
+        />
+      )}
+
+      {/* ── Alert Toasts ───────────────────────────────────────────────────── */}
+      {toasts.length > 0 && (
+        <div className="fixed bottom-5 right-5 z-50 flex flex-col gap-2 max-w-sm w-full pointer-events-none">
+          {toasts.map((toast) => (
+            <div
+              key={toast.id}
+              className="pointer-events-auto flex items-start gap-3 bg-red-950/95 border border-red-700 rounded-xl px-4 py-3 shadow-2xl backdrop-blur-sm"
+            >
+              <AlertTriangle size={16} className="text-red-400 mt-0.5 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-red-200">Issue Detected</p>
+                <p className="text-xs text-red-300/80 mt-0.5">{toast.message}</p>
+                {toast.names.length > 1 && (
+                  <p className="text-[10px] text-red-400/60 mt-1 truncate">
+                    {toast.names.join(", ")}
+                  </p>
+                )}
+              </div>
+              <button
+                onClick={() => dismissToast(toast.id)}
+                className="text-red-500 hover:text-red-300 transition-colors shrink-0"
+                aria-label="Dismiss"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          ))}
         </div>
       )}
     </div>
