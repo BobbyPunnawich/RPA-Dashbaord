@@ -35,7 +35,7 @@ export async function POST(request: NextRequest) {
     owner = "",
     botType = "Scheduled",
     expectedStartTime = "08:00",
-    slaMaxDuration = 3600,
+    slaMaxDuration = 0,
   } = body;
 
   if (!processName?.trim()) {

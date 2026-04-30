@@ -146,13 +146,14 @@ export async function POST(request: NextRequest) {
       processName,
       owner:             "Unassigned",
       botType:           "OnDemand",
-      slaMaxDuration:    1800,
+      slaMaxDuration:    0,
       expectedStartTime: "",
     },
   });
 
   // ── SLA checks ──
-  const isSLABreach = durationSec > processDef.slaMaxDuration;
+  // slaMaxDuration === 0 means "not configured yet" — never flag as breach
+  const isSLABreach = processDef.slaMaxDuration > 0 && durationSec > processDef.slaMaxDuration;
   const actualMinutes = timeToMinutes(
     `${start.getHours()}:${String(start.getMinutes()).padStart(2, "0")}`
   );

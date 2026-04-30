@@ -191,6 +191,24 @@ export default function ProcessBacklogPage() {
         <p className="text-sm text-gray-500 mt-0.5">Run history · sorted newest first</p>
       </div>
 
+      {/* ── SLA not configured banner ────────────────────────────────────────── */}
+      {processDef && processDef.slaMaxDuration === 0 && !editingSLA && (
+        <div className="flex items-center justify-between gap-4 bg-amber-900/25 border border-amber-700/50 rounded-xl px-4 py-3">
+          <div>
+            <p className="text-xs font-semibold text-amber-400">SLA not configured</p>
+            <p className="text-[11px] text-amber-300/70 mt-0.5">
+              Set the max allowed run duration so the system can detect SLA breaches for this bot.
+            </p>
+          </div>
+          <button
+            onClick={() => { setSlaInput(""); setEditingSLA(true); setSlaError(null); }}
+            className="shrink-0 text-xs font-semibold text-amber-300 border border-amber-600/60 hover:border-amber-400 hover:text-amber-200 px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap"
+          >
+            Set SLA
+          </button>
+        </div>
+      )}
+
       {/* ── KPI cards ───────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
 

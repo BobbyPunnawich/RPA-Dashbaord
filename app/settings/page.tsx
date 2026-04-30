@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { Clock, Zap, Pencil, Trash2, X, Check, RefreshCw, Plus, ChevronLeft } from "lucide-react";
 import Link from "next/link";
 import { ProcessDefinition, BotType } from "@/types/rpa";
+import DeveloperSelect from "@/components/DeveloperSelect";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function fmtDuration(sec: number) {
@@ -52,7 +53,7 @@ function AddBotRow({ onAdded }: { onAdded: () => void }) {
           owner:             form.owner.trim() || "Unassigned",
           botType:           form.botType,
           expectedStartTime: form.botType === "Scheduled" ? form.expectedStartTime : "",
-          slaMaxDuration:    parseInt(form.slaMaxDuration) || 1800,
+          slaMaxDuration:    Math.max(0, parseInt(form.slaMaxDuration) || 0),
         }),
       });
       if (!res.ok) { setError((await res.json()).error ?? "Failed to add bot."); return; }
@@ -85,7 +86,11 @@ function AddBotRow({ onAdded }: { onAdded: () => void }) {
         </div>
         <div>
           <label className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 block mb-1">Owner</label>
-          <input className={inputCls} placeholder="e.g. Finance Team" value={form.owner} onChange={e => setForm(f => ({ ...f, owner: e.target.value }))} />
+          <DeveloperSelect
+            value={form.owner}
+            onChange={v => setForm(f => ({ ...f, owner: v }))}
+            onCreateNew={() => { window.open("/developers", "_blank"); }}
+          />
         </div>
         <div>
           <label className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 block mb-1">Bot Type</label>
@@ -152,7 +157,7 @@ function EditRow({ proc, onSaved, onCancel }: EditRowProps) {
           owner:             form.owner.trim() || "Unassigned",
           botType:           form.botType,
           expectedStartTime: form.botType === "Scheduled" ? form.expectedStartTime : "",
-          slaMaxDuration:    parseInt(form.slaMaxDuration) || 1800,
+          slaMaxDuration:    Math.max(0, parseInt(form.slaMaxDuration) || 0),
         }),
       });
       if (!res.ok) { setError((await res.json()).error ?? "Save failed."); return; }
@@ -167,8 +172,11 @@ function EditRow({ proc, onSaved, onCancel }: EditRowProps) {
         <span className="text-indigo-300 font-semibold">{proc.processName}</span>
       </td>
       <td className="px-4 py-4">
-        <input className={inputCls} placeholder="Owner" value={form.owner}
-          onChange={e => setForm(f => ({ ...f, owner: e.target.value }))} />
+        <DeveloperSelect
+          value={form.owner}
+          onChange={v => setForm(f => ({ ...f, owner: v }))}
+          onCreateNew={() => { window.open("/developers", "_blank"); }}
+        />
       </td>
       <td className="px-4 py-4">
         <select className={selectCls} value={form.botType}
@@ -264,11 +272,26 @@ export default function SettingsPage() {
 
       {/* ── Stats ────────────────────────────────────────────────────────────── */}
       {!loading && (
-        <div className="flex gap-4 text-sm text-gray-400">
-          <span><span className="font-semibold text-white">{processes.length}</span> total bots</span>
-          <span><span className="font-semibold text-indigo-300">{scheduled.length}</span> scheduled</span>
-          <span><span className="font-semibold text-yellow-300">{onDemand.length}</span> on-demand</span>
-        </div>
+        <>
+          <div className="flex gap-4 text-sm text-gray-400">
+            <span><span className="font-semibold text-white">{processes.length}</span> total bots</span>
+            <span><span className="font-semibold text-indigo-300">{scheduled.length}</span> scheduled</span>
+            <span><span className="font-semibold text-yellow-300">{onDemand.length}</span> on-demand</span>
+          </div>
+          {processes.filter(p => p.slaMaxDuration === 0).length > 0 && (
+            <div className="flex items-center gap-3 bg-amber-900/25 border border-amber-700/50 rounded-xl px-4 py-3">
+              <span className="text-amber-400 text-lg leading-none">⚠</span>
+              <div>
+                <p className="text-xs font-semibold text-amber-400">
+                  {processes.filter(p => p.slaMaxDuration === 0).length} bot{processes.filter(p => p.slaMaxDuration === 0).length !== 1 ? "s" : ""} without SLA configured
+                </p>
+                <p className="text-[11px] text-amber-300/70 mt-0.5">
+                  Click Edit on each highlighted row below to set the SLA max duration.
+                </p>
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       {/* ── Table ────────────────────────────────────────────────────────────── */}
@@ -364,7 +387,7 @@ function BotTable({ rows, editId, deleteId, deleting, onEdit, onCancelEdit, onSa
             }
 
             return (
-              <tr key={proc.id} className={`border-b border-gray-800/50 ${rowBg} transition-colors`}>
+              <tr key={proc.id} className={`border-b border-gray-800/50 ${proc.slaMaxDuration === 0 ? "bg-amber-950/20" : rowBg} transition-colors`}>
                 {/* Process Name */}
                 <td className="px-4 py-3">
                   <span className="font-medium text-gray-100">{proc.processName}</span>
@@ -387,9 +410,17 @@ function BotTable({ rows, editId, deleteId, deleting, onEdit, onCancelEdit, onSa
                     : <span className="text-gray-600">—</span>}
                 </td>
                 {/* SLA */}
-                <td className="px-4 py-3 text-sm text-gray-300">
-                  {fmtDuration(proc.slaMaxDuration)}
-                  <span className="text-gray-600 text-xs ml-1">({proc.slaMaxDuration}s)</span>
+                <td className="px-4 py-3 text-sm">
+                  {proc.slaMaxDuration === 0 ? (
+                    <span className="inline-flex items-center gap-1 text-amber-400 font-semibold text-xs">
+                      ⚠ Not set — click Edit
+                    </span>
+                  ) : (
+                    <span className="text-gray-300">
+                      {fmtDuration(proc.slaMaxDuration)}
+                      <span className="text-gray-600 text-xs ml-1">({proc.slaMaxDuration}s)</span>
+                    </span>
+                  )}
                 </td>
                 {/* Actions */}
                 <td className="px-4 py-3">
