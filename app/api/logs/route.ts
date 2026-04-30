@@ -304,6 +304,7 @@ export async function GET(request: NextRequest) {
     type DayCell = {
       status: CellStatus;
       runCount: number;
+      successCount: number;
       transactionId: string;
       durationSec: number;
       startTime: string;
@@ -326,10 +327,12 @@ export async function GET(request: NextRequest) {
       else if (log.isLateStart) logStatus = "LateStart";
       else logStatus = "Success";
 
+      const isSuccess = logStatus === "Success";
       if (!dayMap.has(idx)) {
         dayMap.set(idx, {
           status: logStatus,
           runCount: 1,
+          successCount: isSuccess ? 1 : 0,
           transactionId: log.transactionId,
           durationSec: log.durationSec,
           startTime: log.startTime.toISOString(),
@@ -340,6 +343,7 @@ export async function GET(request: NextRequest) {
       } else {
         const cell = dayMap.get(idx)!;
         cell.runCount++;
+        if (isSuccess) cell.successCount++;
         cell.volumeCount += log.volumeCount;
         cell.status = higherPriority(cell.status, logStatus);
         // Update representative run to the worst one
@@ -374,6 +378,7 @@ export async function GET(request: NextRequest) {
           dateLabel: dateLabel(idx, startRange),
           status: cell.status,
           runCount: cell.runCount,
+          successCount: cell.successCount,
           transactionId: cell.transactionId,
           durationSec: cell.durationSec,
           startTime: cell.startTime,

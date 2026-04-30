@@ -67,10 +67,10 @@ export default function BotRunDetail({ processName }: { processName: string }) {
   const [loading, setLoading] = useState(true);
   const [filter,  setFilter]  = useState<RunFilter>("All");
 
-  // Compute today's CE date once on mount
+  // Use LOCAL date — getUTCDate() would give yesterday for ICT before 07:00
   const today = useMemo(() => {
     const n = new Date();
-    return `${n.getUTCFullYear()}-${String(n.getUTCMonth() + 1).padStart(2, "0")}-${String(n.getUTCDate()).padStart(2, "0")}`;
+    return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
   }, []);
 
   useEffect(() => {

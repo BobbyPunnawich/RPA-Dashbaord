@@ -47,6 +47,7 @@ export interface MatrixCell {
   dateLabel: string;      // display label, e.g. "1", "Apr 1"
   status: CellStatus;
   runCount: number;
+  successCount?: number;  // how many runs were pure Success (for mixed-day split badge)
   transactionId?: string;
   errorMessage?: string | null;
   screenshotPath?: string | null;

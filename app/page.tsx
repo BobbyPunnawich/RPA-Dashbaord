@@ -15,6 +15,14 @@ function toAdDateStr(d: Date) {
   const day = String(d.getUTCDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 }
+// Use LOCAL date (not UTC) for "today" — in Thailand (UTC+7), getUTCDate() returns
+// yesterday when the local time is between midnight and 7 am ICT.
+function toLocalDateStr(d: Date) {
+  const y   = d.getFullYear();
+  const m   = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
 function defaultRange() {
   const now = new Date();
   const y   = now.getUTCFullYear();
@@ -69,7 +77,7 @@ export default function DashboardPage() {
   // ── Today-only stats + matrix for KPI cards + chart ─────────────────────────
   const fetchTodayStats = useCallback(async () => {
     setLoadingToday(true);
-    const today  = toAdDateStr(new Date());
+    const today  = toLocalDateStr(new Date());   // local date, not UTC
     const params = new URLSearchParams({ from: today, to: today });
     try {
       const res = await fetch(`/api/logs?${params}`);

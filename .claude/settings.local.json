@@ -20,7 +20,8 @@
       "Bash(curl -s \"http://localhost:3000/api/logs?from=2026-04-01&to=2026-04-30\")",
       "Bash(curl:*)",
       "Bash(npx next *)",
-      "PowerShell(Stop-Process *)"
+      "PowerShell(Stop-Process *)",
+      "Bash(npm i *)"
     ]
   }
 }

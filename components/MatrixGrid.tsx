@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Plus, X, Trash2, Clock, Zap, Settings2 } from "lucide-react";
+import { Plus, X, Trash2, Clock, Zap, Settings2, Mail, UserPlus } from "lucide-react";
 import DeveloperSelect from "@/components/DeveloperSelect";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -135,6 +135,12 @@ function CellTooltip({ tt }: { tt: TooltipState }) {
               <span className="text-gray-200">{cell.runCount}</span>
             </div>
           )}
+          {cell.status !== "Success" && (cell.successCount ?? 0) > 0 && (
+            <div className="flex justify-between mt-1 pt-1 border-t border-gray-800">
+              <span className="text-emerald-500">Successes</span>
+              <span className="text-emerald-400 font-semibold">{cell.successCount}</span>
+            </div>
+          )}
           {cell.errorMessage && <p className="mt-1 text-red-400 truncate">{cell.errorMessage}</p>}
         </div>
       )}
@@ -168,14 +174,31 @@ function CellBadge({ cell, processDef, isToday, onErrorClick, onTipEnter, onTipL
     );
   }
   const cfg = STATUS_CFG[cell.status];
+  // Mixed day: worst status is non-success AND some runs succeeded → split badge
+  const isMixed = cell.status !== "Success" && (cell.successCount ?? 0) > 0;
   return (
     <div className="relative inline-flex mx-auto" onMouseEnter={onTipEnter} onMouseLeave={onTipLeave}>
-      <button onClick={cell.status === "Failed" ? onErrorClick : undefined}
-        className={`w-7 h-7 rounded-md border text-xs font-bold flex items-center justify-center transition-transform hover:scale-110
-          ${cfg.bg} ${cfg.border} ${cfg.text}
-          ${cell.status === "Failed" ? "cursor-pointer ring-1 ring-red-600/50 animate-pulse hover:animate-none" : "cursor-default"}`}>
-        {cfg.symbol}
-      </button>
+      {isMixed ? (
+        <button onClick={cell.status === "Failed" ? onErrorClick : undefined}
+          className={`w-7 h-7 rounded-md border overflow-hidden flex transition-transform hover:scale-110 ${cfg.border}
+            ${cell.status === "Failed" ? "cursor-pointer ring-1 ring-red-600/50" : "cursor-default"}`}>
+          {/* Left half — worst status */}
+          <span className={`flex-1 flex items-center justify-center text-[9px] font-bold ${cfg.bg} ${cfg.text}`}>
+            {cfg.symbol}
+          </span>
+          {/* Right half — success */}
+          <span className="flex-1 flex items-center justify-center text-[9px] font-bold bg-emerald-900 text-emerald-300">
+            ✓
+          </span>
+        </button>
+      ) : (
+        <button onClick={cell.status === "Failed" ? onErrorClick : undefined}
+          className={`w-7 h-7 rounded-md border text-xs font-bold flex items-center justify-center transition-transform hover:scale-110
+            ${cfg.bg} ${cfg.border} ${cfg.text}
+            ${cell.status === "Failed" ? "cursor-pointer ring-1 ring-red-600/50 animate-pulse hover:animate-none" : "cursor-default"}`}>
+          {cfg.symbol}
+        </button>
+      )}
       {cell.runCount > 1 && (
         <span className="absolute -top-1.5 -right-1.5 bg-gray-700 text-gray-200 text-[8px] font-bold rounded-full w-4 h-4 flex items-center justify-center border border-gray-600 z-10">
           {cell.runCount}
@@ -186,8 +209,48 @@ function CellBadge({ cell, processDef, isToday, onErrorClick, onTipEnter, onTipL
 }
 
 // ── Error Modal ───────────────────────────────────────────────────────────────
-interface ErrorInfo { transactionId: string; processName: string; dayLabel: string; errorMessage: string; screenshotPath: string | null }
+interface ErrorInfo {
+  transactionId: string;
+  processName: string;
+  dayLabel: string;
+  errorMessage: string;
+  screenshotPath: string | null;
+  ownerName: string;
+}
 function ErrorModal({ info, onClose }: { info: ErrorInfo; onClose: () => void }) {
+  const [notifying, setNotifying]         = useState(false);
+  const [notifyStatus, setNotifyStatus]   = useState<"idle" | "sent" | "error">("idle");
+  const [notifyError, setNotifyError]     = useState<string | null>(null);
+
+  async function notifyOwner() {
+    setNotifying(true); setNotifyError(null);
+    try {
+      const res = await fetch("/api/send-report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          processName:   info.processName,
+          ownerName:     info.ownerName,
+          errorMessage:  info.errorMessage,
+          dayLabel:      info.dayLabel,
+          transactionId: info.transactionId,
+        }),
+      });
+      if (res.ok) {
+        setNotifyStatus("sent");
+      } else {
+        const d = await res.json();
+        setNotifyError(d.error ?? "Failed to send report.");
+        setNotifyStatus("error");
+      }
+    } catch {
+      setNotifyError("Network error.");
+      setNotifyStatus("error");
+    } finally {
+      setNotifying(false);
+    }
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={onClose}>
       <div className="bg-gray-900 border border-red-800 rounded-2xl shadow-2xl w-full max-w-lg mx-4 p-6" onClick={(e) => e.stopPropagation()}>
@@ -206,7 +269,34 @@ function ErrorModal({ info, onClose }: { info: ErrorInfo; onClose: () => void })
         {info.screenshotPath
           ? <a href={info.screenshotPath} target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:text-indigo-300 text-sm underline underline-offset-2 break-all">{info.screenshotPath}</a>
           : <p className="text-sm text-gray-600 italic">No screenshot attached</p>}
-        <button onClick={onClose} className="mt-5 w-full bg-gray-800 hover:bg-gray-700 text-gray-200 py-2 rounded-lg text-sm font-medium transition-colors">Close</button>
+
+        {/* Notify owner */}
+        <div className="mt-4 pt-4 border-t border-gray-800">
+          {info.ownerName ? (
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-[10px] uppercase tracking-widest text-gray-500">Owner</p>
+                <p className="text-sm font-semibold text-gray-200">{info.ownerName}</p>
+              </div>
+              {notifyStatus === "sent" ? (
+                <span className="flex items-center gap-1.5 text-xs font-semibold text-emerald-400 bg-emerald-900/25 border border-emerald-700/40 px-3 py-1.5 rounded-lg">
+                  ✓ Report sent
+                </span>
+              ) : (
+                <button onClick={notifyOwner} disabled={notifying}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-sm font-semibold transition-colors">
+                  <Mail size={14} />
+                  {notifying ? "Sending…" : "Notify Owner"}
+                </button>
+              )}
+            </div>
+          ) : (
+            <p className="text-xs text-amber-400 italic">No owner assigned — open ⚙ bot settings to assign one.</p>
+          )}
+          {notifyError && <p className="text-xs text-red-400 mt-2 bg-red-900/20 border border-red-800/30 rounded px-2 py-1">{notifyError}</p>}
+        </div>
+
+        <button onClick={onClose} className="mt-4 w-full bg-gray-800 hover:bg-gray-700 text-gray-200 py-2 rounded-lg text-sm font-medium transition-colors">Close</button>
       </div>
     </div>
   );
@@ -218,7 +308,7 @@ function SideSheet({ processName, processDef, onClose, onRefresh }: SideSheetPro
   const [botType, setBotType]                 = useState<BotType>((processDef?.botType as BotType) ?? "Scheduled");
   const [owner, setOwner]                     = useState(processDef?.owner ?? "");
   const [expectedStartTime, setExpectedStart] = useState(processDef?.expectedStartTime ?? "08:00");
-  const [slaMaxDuration, setSlaMax]           = useState(String(processDef?.slaMaxDuration ?? 0));
+  const [slaMaxDuration, setSlaMax]           = useState(processDef?.slaMaxDuration ? String(processDef.slaMaxDuration) : "");
   const slaNotSet = !processDef || processDef.slaMaxDuration === 0;
   const [saving, setSaving]   = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -327,18 +417,18 @@ function AddBotDialog({ open, onClose, onRefresh }: { open: boolean; onClose: ()
   const [botType, setBotType]         = useState<BotType>("Scheduled");
   const [owner, setOwner]             = useState("");
   const [expectedStartTime, setExpectedStart] = useState("08:00");
-  const [slaMaxDuration, setSlaMax]   = useState("3600");
+  const [slaMaxDuration, setSlaMax]   = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError]   = useState<string | null>(null);
 
-  function reset() { setProcessName(""); setBotType("Scheduled"); setOwner(""); setExpectedStart("08:00"); setSlaMax("3600"); setError(null); }
+  function reset() { setProcessName(""); setBotType("Scheduled"); setOwner(""); setExpectedStart("08:00"); setSlaMax(""); setError(null); }
 
   async function save() {
     setSaving(true); setError(null);
     try {
       const res = await fetch("/api/processes", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ processName: processName.trim(), botType, owner, expectedStartTime: botType === "Scheduled" ? expectedStartTime : "", slaMaxDuration: parseInt(slaMaxDuration) || 3600 }),
+        body: JSON.stringify({ processName: processName.trim(), botType, owner, expectedStartTime: botType === "Scheduled" ? expectedStartTime : "", slaMaxDuration: parseInt(slaMaxDuration) || 0 }),
       });
       if (!res.ok) { setError((await res.json()).error ?? "Failed"); return; }
       reset(); onRefresh(); onClose();
@@ -466,10 +556,10 @@ const stickyHd   = "bg-[#111827] border-b border-gray-700/80";
 function BotTable({ rows, showStartCol, todayIndex, todayInRange, rangeStart, fromDate, toDate, allTimeCounts, processDefMap, onSideSheet, onError, onTipEnter, onTipLeave }: BotTableProps) {
   if (!rows.length) return null;
 
-  // Pixel offsets for sticky columns: Process=152 | Start?=68 | SLA=60 | Avg=72 | %=48 | Runs=48
+  // Pixel offsets: Process=152 | Owner=100 | Start?=68 | SLA=60 | Avg=72 | Rate=48 | Runs=48
   const L = showStartCol
-    ? { start: 152, sla: 220, avg: 280, pct: 352, runs: 400 }
-    : {             sla: 152, avg: 212, pct: 284, runs: 332 };
+    ? { owner: 152, start: 252, sla: 320, avg: 380, pct: 452, runs: 500 }
+    : { owner: 152,             sla: 252, avg: 312, pct: 384, runs: 432 };
 
   // Shadow style for the right edge of the sticky panel (last sticky col = Runs)
   const runsShadow: React.CSSProperties = {
@@ -489,6 +579,11 @@ function BotTable({ rows, showStartCol, todayIndex, todayInRange, rangeStart, fr
             <th rowSpan={2}
               className={`text-left px-4 sticky left-0 z-20 w-[152px] min-w-[152px] align-bottom pb-2 ${stickyHd}`}>
               <span className="text-[10px] font-semibold uppercase tracking-widest text-gray-500">Process</span>
+            </th>
+            {/* Owner */}
+            <th rowSpan={2} style={{ left: L.owner }}
+              className={`px-3 text-left sticky z-20 w-[100px] min-w-[100px] align-bottom pb-2 ${stickyHd}`}>
+              <span className="text-[10px] font-semibold uppercase tracking-widest text-gray-500">Owner</span>
             </th>
             {/* Start — Scheduled only */}
             {showStartCol && (
@@ -579,17 +674,31 @@ function BotTable({ rows, showStartCol, todayIndex, todayInRange, rangeStart, fr
                 <td className={`px-4 py-2.5 sticky left-0 z-10 w-[152px] min-w-[152px] ${stickyCell}`}>
                   <div className="flex items-center gap-1.5">
                     <Link href={`/process/${encodeURIComponent(row.processName)}?from=${fromDate}&to=${toDate}`}
-                      className="text-gray-200 font-medium text-sm hover:text-indigo-300 transition-colors truncate max-w-[112px]"
+                      className="text-gray-200 font-medium text-sm hover:text-indigo-300 transition-colors truncate max-w-[104px]"
                       title={row.processName}>
                       {row.processName}
                     </Link>
                     <button onClick={() => onSideSheet(row.processName)} title="Edit bot settings"
-                      className="text-gray-700 hover:text-indigo-400 transition-colors shrink-0 p-0.5 rounded">
-                      <Settings2 size={10} />
+                      className="shrink-0 p-1 rounded-md text-indigo-400/60 hover:text-indigo-300 hover:bg-indigo-900/30 transition-colors">
+                      <Settings2 size={12} />
                     </button>
                   </div>
                   {row.isRegisteredOnly && (
                     <span className="text-[10px] text-gray-700 block leading-tight mt-0.5 font-mono">no runs</span>
+                  )}
+                </td>
+
+                {/* Owner */}
+                <td style={{ left: L.owner }} className={`px-2 py-2.5 sticky z-10 w-[100px] min-w-[100px] ${stickyCell}`}>
+                  {def?.owner ? (
+                    <span className="text-[11px] text-gray-300 truncate block max-w-[88px]" title={def.owner}>
+                      {def.owner}
+                    </span>
+                  ) : (
+                    <button onClick={() => onSideSheet(row.processName)}
+                      className="flex items-center gap-1 text-[10px] font-semibold text-amber-400 hover:text-amber-300 transition-colors">
+                      <UserPlus size={10} /> Assign
+                    </button>
                   )}
                 </td>
 
@@ -648,11 +757,12 @@ function BotTable({ rows, showStartCol, todayIndex, todayInRange, rangeStart, fr
                         <CellBadge
                           cell={cell} processDef={def} isToday={isToday}
                           onErrorClick={() => onError({
-                            transactionId: cell.transactionId ?? "",
-                            processName: row.processName,
-                            dayLabel: cell.dateLabel,
-                            errorMessage: cell.errorMessage ?? "No error message recorded.",
+                            transactionId:  cell.transactionId ?? "",
+                            processName:    row.processName,
+                            dayLabel:       cell.dateLabel,
+                            errorMessage:   cell.errorMessage ?? "No error message recorded.",
                             screenshotPath: cell.screenshotPath ?? null,
+                            ownerName:      def?.owner ?? "",
                           })}
                           onTipEnter={(e) => onTipEnter(e, cell, row.processName)}
                           onTipLeave={onTipLeave}
@@ -691,7 +801,14 @@ function Legend() {
         <span className="w-3 h-3 bg-gray-800/30 inline-block rounded-sm" />
         Weekend
       </span>
-      <span className="ml-auto text-gray-600 text-[10px]">Click name for history · ⚙ to edit</span>
+      <span className="flex items-center gap-1.5">
+        <span className="w-3 h-3 rounded-sm overflow-hidden inline-flex border border-red-700">
+          <span className="flex-1 bg-red-900" />
+          <span className="flex-1 bg-emerald-900" />
+        </span>
+        Mixed
+      </span>
+      <span className="ml-auto text-gray-600 text-[10px]">Click name for history · ⚙ to edit · ✗ cell to report issue</span>
     </div>
   );
 }
@@ -801,7 +918,7 @@ export default function MatrixGrid({ matrix, totalDays, startDate, fromDate, toD
     <>
       {/* Header + add button */}
       <div className="flex items-center justify-between mb-3">
-        <span className="text-xs text-gray-600">Click name for history · ⚙ to edit · Scroll right for dates</span>
+        <span className="text-xs text-gray-600">Click name for history · ⚙ to edit · ✗ cell to report issue · Scroll right for dates</span>
         <button onClick={() => setShowAdd(true)}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition-colors">
           <Plus size={12} /> Add Bot

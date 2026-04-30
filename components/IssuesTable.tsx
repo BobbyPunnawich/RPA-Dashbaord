@@ -2,7 +2,7 @@
 
 import { AlertTriangle, Clock, ExternalLink } from "lucide-react";
 import Link from "next/link";
-import { ProcessMatrix, ProcessDefinition, DashboardStats } from "@/types/rpa";
+import { ProcessMatrix, ProcessDefinition, DashboardStats, CellStatus } from "@/types/rpa";
 
 export interface IssueErrorInfo {
   transactionId: string;
@@ -17,6 +17,14 @@ interface Props {
   stats: DashboardStats | null;
   onErrorClick: (info: IssueErrorInfo) => void;
 }
+
+const ISSUE_STATUSES = new Set<CellStatus>(["Failed", "SLABreach", "LateStart"]);
+
+const STATUS_CFG: Record<string, { label: string; borderLeft: string; badge: string }> = {
+  Failed:    { label: "Failed",     borderLeft: "border-l-red-600",    badge: "bg-red-900/50 text-red-300 border-red-700"    },
+  SLABreach: { label: "SLA Breach", borderLeft: "border-l-orange-500", badge: "bg-orange-900/50 text-orange-300 border-orange-700" },
+  LateStart: { label: "Late Start", borderLeft: "border-l-yellow-500", badge: "bg-yellow-900/50 text-yellow-300 border-yellow-700" },
+};
 
 function fmtTime(iso: string): string {
   return new Date(iso).toLocaleTimeString("en-US", {
@@ -36,27 +44,37 @@ function fmtDuration(sec: number): string {
 export default function IssuesTable({ todayMatrix, processes, stats, onErrorClick }: Props) {
   const processDefMap = new Map(processes.map((p) => [p.processName, p]));
 
-  const failedBots = (todayMatrix ?? [])
+  // Include Failed, SLABreach, and LateStart
+  const issueBots = (todayMatrix ?? [])
     .flatMap(({ processName, cells }) =>
       cells
-        .filter((c) => c.status === "Failed")
+        .filter((c) => ISSUE_STATUSES.has(c.status))
         .map((cell) => ({ processName, cell, def: processDefMap.get(processName) }))
-    );
+    )
+    // Failed first, then SLABreach, then LateStart
+    .sort((a, b) => {
+      const order: Record<string, number> = { Failed: 0, SLABreach: 1, LateStart: 2 };
+      return (order[a.cell.status] ?? 3) - (order[b.cell.status] ?? 3);
+    });
 
-  if (failedBots.length === 0) return null;
+  if (issueBots.length === 0) return null;
 
-  const failedRunCount = stats?.breakdown?.failed ?? failedBots.length;
+  const failedCount    = stats?.breakdown?.failed    ?? 0;
+  const slaIssueCount  = stats?.breakdown?.slaIssues ?? 0;
+  const totalIssues    = failedCount + slaIssueCount;
 
   return (
     <section>
       <div className="flex items-center gap-3 mb-3 flex-wrap">
         <AlertTriangle size={15} className="text-red-400 shrink-0" />
-        <h2 className="text-base font-bold text-white">Failed Today</h2>
+        <h2 className="text-base font-bold text-white">Issues Today</h2>
         <span className="text-[10px] text-white bg-red-600 px-1.5 py-0.5 rounded-full font-bold shrink-0">
-          {failedRunCount}
+          {totalIssues || issueBots.length}
         </span>
         <span className="text-[10px] text-gray-500">
-          {failedRunCount} run{failedRunCount !== 1 ? "s" : ""} · {failedBots.length} bot{failedBots.length !== 1 ? "s" : ""}
+          {issueBots.length} bot{issueBots.length !== 1 ? "s" : ""}
+          {failedCount > 0 && ` · ${failedCount} failed`}
+          {slaIssueCount > 0 && ` · ${slaIssueCount} SLA`}
         </span>
       </div>
 
@@ -66,31 +84,40 @@ export default function IssuesTable({ todayMatrix, processes, stats, onErrorClic
             <thead>
               <tr className="border-b border-gray-800 text-[10px] uppercase tracking-widest text-gray-500">
                 <th className="text-left px-4 py-2.5 font-semibold">Bot</th>
+                <th className="text-left px-4 py-2.5 font-semibold">Status</th>
                 <th className="text-left px-4 py-2.5 font-semibold">Runs</th>
                 <th className="text-left px-4 py-2.5 font-semibold">Time</th>
                 <th className="text-left px-4 py-2.5 font-semibold">Duration</th>
-                <th className="text-left px-4 py-2.5 font-semibold">Error</th>
+                <th className="text-left px-4 py-2.5 font-semibold">Detail</th>
                 <th className="text-left px-4 py-2.5 font-semibold">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800/50">
-              {failedBots.map(({ processName, cell, def }) => {
+              {issueBots.map(({ processName, cell, def }) => {
+                const cfg = STATUS_CFG[cell.status] ?? STATUS_CFG.Failed;
                 const slaPct =
-                  def && cell.durationSec !== undefined
+                  def && def.slaMaxDuration > 0 && cell.durationSec !== undefined
                     ? Math.round((cell.durationSec / def.slaMaxDuration) * 100)
                     : null;
 
                 return (
                   <tr
                     key={processName}
-                    className="border-l-2 border-l-red-600 hover:bg-gray-800/40 transition-colors"
+                    className={`border-l-2 ${cfg.borderLeft} hover:bg-gray-800/40 transition-colors`}
                   >
-                    {/* Bot name */}
+                    {/* Bot name + owner */}
                     <td className="px-4 py-3">
                       <span className="font-medium text-gray-200 truncate max-w-[130px] block" title={processName}>
                         {processName}
                       </span>
                       {def?.owner && <span className="text-[10px] text-gray-500">{def.owner}</span>}
+                    </td>
+
+                    {/* Status badge */}
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${cfg.badge}`}>
+                        {cfg.label}
+                      </span>
                     </td>
 
                     {/* Run count */}
@@ -118,8 +145,8 @@ export default function IssuesTable({ todayMatrix, processes, stats, onErrorClic
                       )}
                     </td>
 
-                    {/* Error message */}
-                    <td className="px-4 py-3 max-w-[260px]">
+                    {/* Detail: error message or SLA note */}
+                    <td className="px-4 py-3 max-w-[220px]">
                       {cell.errorMessage ? (
                         <button
                           onClick={() => onErrorClick({
@@ -128,13 +155,23 @@ export default function IssuesTable({ todayMatrix, processes, stats, onErrorClic
                             errorMessage: cell.errorMessage!,
                             screenshotPath: cell.screenshotPath ?? null,
                           })}
-                          className="text-xs text-red-400 hover:text-red-300 text-left transition-colors truncate block max-w-[260px]"
+                          className="text-xs text-red-400 hover:text-red-300 text-left transition-colors truncate block max-w-[220px]"
                           title={cell.errorMessage}
                         >
-                          {cell.errorMessage.length > 80
-                            ? cell.errorMessage.slice(0, 80) + "…"
+                          {cell.errorMessage.length > 70
+                            ? cell.errorMessage.slice(0, 70) + "…"
                             : cell.errorMessage}
                         </button>
+                      ) : cell.status === "SLABreach" ? (
+                        <span className="text-xs text-orange-400">
+                          Exceeded max duration
+                          {def && def.slaMaxDuration > 0 && ` (${fmtDuration(def.slaMaxDuration)})`}
+                        </span>
+                      ) : cell.status === "LateStart" ? (
+                        <span className="text-xs text-yellow-400">
+                          Started later than expected
+                          {def?.expectedStartTime && ` (expected ${def.expectedStartTime})`}
+                        </span>
                       ) : (
                         <span className="text-xs text-gray-600">—</span>
                       )}
