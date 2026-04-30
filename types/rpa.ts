@@ -12,7 +12,7 @@ export interface ProcessDefinition {
 
 export interface LogPayload {
   processName: string;
-  status: "Success" | "Failed";
+  status: "Success" | "Failed" | "None"; // PAD sends "None" to mean "no error"
   startTime: string;      // ISO 8601
   endTime: string;        // ISO 8601 — durationSec calculated server-side
   runBy?: string;         // who triggered the run
@@ -23,11 +23,20 @@ export interface LogPayload {
   remarks?: string;
 }
 
+export interface StatusBreakdown {
+  success:   number; // status=Success, !isSLABreach, !isLateStart
+  lateStart: number; // status=Success, !isSLABreach,  isLateStart
+  slaBreach: number; // status=Success,  isSLABreach
+  failed:    number; // status=Failed
+  slaIssues: number; // isSLABreach OR isLateStart (any status)
+}
+
 export interface DashboardStats {
   totalRuns: number;
   successRate: number;
   slaCompliance: number;
   avgDurationSec: number;
+  breakdown?: StatusBreakdown;
 }
 
 // Priority: Failed > SLABreach > LateStart > Success > None

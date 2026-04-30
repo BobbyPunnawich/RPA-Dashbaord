@@ -6,14 +6,27 @@ import TodaySummary from "@/components/TodaySummary";
 import MatrixGrid from "@/components/MatrixGrid";
 import { DashboardStats, ProcessMatrix, ProcessDefinition } from "@/types/rpa";
 
-function toDateInput(d: Date) {
-  return d.toISOString().split("T")[0];
+// Date input state always holds AD (Gregorian) "YYYY-MM-DD" so HTML date pickers work correctly.
+// PAD stores timestamps with Buddhist Era year (พ.ศ. = AD + 543), e.g. "2569-04-29T13:18:00Z".
+// toBEParam() converts an AD date string to BE before it is sent to the API.
+function toAdDateStr(d: Date) {
+  const y   = d.getUTCFullYear();
+  const m   = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+function toBEParam(adDate: string) {
+  const [y, m, d] = adDate.split("-");
+  return `${parseInt(y, 10) + 543}-${m}-${d}`;
 }
 function defaultRange() {
-  const now  = new Date();
-  const from = new Date(now.getFullYear(), now.getMonth(), 1);
-  const to   = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-  return { from: toDateInput(from), to: toDateInput(to) };
+  const now = new Date();
+  const y   = now.getUTCFullYear();
+  const mo  = now.getUTCMonth();
+  return {
+    from: toAdDateStr(new Date(Date.UTC(y, mo, 1))),
+    to:   toAdDateStr(new Date(Date.UTC(y, mo + 1, 0))),
+  };
 }
 
 interface DashboardData {
@@ -22,9 +35,13 @@ interface DashboardData {
   totalDays: number;
   startDate: string;
   endDate: string;
+  allTimeCounts: Record<string, number>;
 }
 
-const EMPTY_STATS: DashboardStats = { totalRuns: 0, successRate: 0, slaCompliance: 100, avgDurationSec: 0 };
+const EMPTY_STATS: DashboardStats = {
+  totalRuns: 0, successRate: 0, slaCompliance: 100, avgDurationSec: 0,
+  breakdown: { success: 0, lateStart: 0, slaBreach: 0, failed: 0, slaIssues: 0 },
+};
 
 export default function DashboardPage() {
   const [range, setRange]                       = useState(defaultRange);
@@ -46,24 +63,27 @@ export default function DashboardPage() {
   // ── Today-only stats + matrix for KPI cards + chart ─────────────────────────
   const fetchTodayStats = useCallback(async () => {
     setLoadingToday(true);
-    const today  = toDateInput(new Date());
-    const params = new URLSearchParams({ from: today, to: today });
+    const todayBE = toBEParam(toAdDateStr(new Date())); // AD→BE for DB query
+    const params  = new URLSearchParams({ from: todayBE, to: todayBE });
     try {
       const res = await fetch(`/api/logs?${params}`);
       if (res.ok) {
         const json = await res.json();
         setTodayStats(json.stats);
         setTodayMatrix(json.matrix);
+      } else {
+        console.error("[fetchTodayStats] API error", res.status, await res.text().catch(() => ""));
       }
-    } catch { /* ignore */ }
-    finally { setLoadingToday(false); }
+    } catch (e) {
+      console.error("[fetchTodayStats] fetch failed", e);
+    } finally { setLoadingToday(false); }
   }, []);
 
   // ── Matrix data (user-selected date range) ───────────────────────────────────
   const fetchDashboard = useCallback(async () => {
     setLoadingDash(true);
     const params = new URLSearchParams({
-      from: range.from, to: range.to,
+      from: toBEParam(range.from), to: toBEParam(range.to), // AD→BE for DB query
       ...(debouncedSearch && { search: debouncedSearch }),
     });
     try {
@@ -87,9 +107,11 @@ export default function DashboardPage() {
 
   function handleRefresh() { setRefreshKey((k) => k + 1); }
 
-  const todayLabel = new Date().toLocaleDateString("en-US", {
+  const _now      = new Date();
+  const _beYear   = _now.getUTCFullYear() + 543;
+  const todayLabel = `${_now.toLocaleDateString("en-US", {
     weekday: "long", month: "short", day: "numeric",
-  });
+  })} พ.ศ. ${_beYear}`;
 
   return (
     <div className="space-y-6">
@@ -149,13 +171,16 @@ export default function DashboardPage() {
       <section>
         <div className="flex items-center gap-3 mb-3">
           <h2 className="text-base font-bold text-white">Operational Matrix</h2>
-          <span className="text-xs text-gray-600">{range.from} → {range.to}</span>
+          <span className="text-xs text-gray-600">{toBEParam(range.from)} → {toBEParam(range.to)}</span>
           {loadingDash && <span className="text-xs text-indigo-400 animate-pulse">Updating…</span>}
         </div>
         <MatrixGrid
           matrix={data?.matrix ?? []}
           totalDays={data?.totalDays ?? 31}
           startDate={data?.startDate ?? new Date(range.from).toISOString()}
+          fromDate={range.from}
+          toDate={range.to}
+          allTimeCounts={data?.allTimeCounts ?? {}}
           processes={processes}
           onRefresh={handleRefresh}
           loading={loadingDash}

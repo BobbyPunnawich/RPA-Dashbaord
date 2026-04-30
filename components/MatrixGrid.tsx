@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Plus, X, Trash2, ChevronRight, Clock, Zap, Settings2 } from "lucide-react";
+import { Plus, X, Trash2, Clock, Zap, Settings2 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
   DialogDescription, DialogFooter, DialogClose,
@@ -18,6 +18,8 @@ const STATUS_CFG: Record<CellStatus, { bg: string; border: string; text: string;
   Failed:    { bg: "bg-red-900",     border: "border-red-600",     text: "text-red-300",     label: "Failed",     symbol: "✗"  },
 };
 
+const DOW = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function fmtDuration(sec: number) {
   if (sec < 60) return `${sec}s`;
@@ -25,7 +27,9 @@ function fmtDuration(sec: number) {
   return s > 0 ? `${m}m ${s}s` : `${m}m`;
 }
 function fmtTime(iso: string) {
-  return new Date(iso).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
+  // UTC display — PAD stores ICT local time at the UTC epoch, so the raw UTC value
+  // equals the local time the bot actually ran.
+  return new Date(iso).toLocaleTimeString("en-US", { timeZone: "UTC", hour: "2-digit", minute: "2-digit", hour12: false });
 }
 function successPct(cells: MatrixCell[]): string {
   const active = cells.filter((c) => c.status !== "None");
@@ -38,8 +42,23 @@ function avgDuration(cells: MatrixCell[]): string {
   const avg = active.reduce((sum, c) => sum + (c.durationSec ?? 0), 0) / active.length;
   return fmtDuration(Math.round(avg));
 }
-function latestStatus(cells: MatrixCell[]): CellStatus {
-  return [...cells].reverse().find((c) => c.status !== "None")?.status ?? "None";
+
+// Build month group spans for the two-row date header
+interface MonthGroup { label: string; span: number }
+function buildMonthGroups(cells: MatrixCell[], rangeStart: Date): MonthGroup[] {
+  const groups: MonthGroup[] = [];
+  let lastMonth = -1;
+  for (const cell of cells) {
+    const d = new Date(rangeStart.getTime() + (cell.dayIndex - 1) * 86_400_000);
+    const m = d.getMonth();
+    if (m !== lastMonth) {
+      groups.push({ label: d.toLocaleDateString("en-US", { month: "short", year: "numeric" }), span: 1 });
+      lastMonth = m;
+    } else {
+      groups[groups.length - 1].span++;
+    }
+  }
+  return groups;
 }
 
 const inputCls = "w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-colors";
@@ -49,14 +68,10 @@ function BotTypeToggle({ value, onChange }: { value: BotType; onChange: (v: BotT
   return (
     <div className="flex rounded-lg overflow-hidden border border-gray-700 text-xs font-semibold">
       {(["Scheduled", "OnDemand"] as BotType[]).map((t) => (
-        <button
-          key={t}
-          type="button"
-          onClick={() => onChange(t)}
+        <button key={t} type="button" onClick={() => onChange(t)}
           className={`flex-1 flex items-center justify-center gap-1.5 py-2 transition-colors ${
             value === t ? "bg-indigo-600 text-white" : "bg-gray-800 text-gray-400 hover:bg-gray-700"
-          }`}
-        >
+          }`}>
           {t === "Scheduled" ? <Clock size={11} /> : <Zap size={11} />}
           {t === "Scheduled" ? "Scheduled" : "On-Demand"}
         </button>
@@ -76,8 +91,7 @@ function CellTooltip({ tt }: { tt: TooltipState }) {
   const left = Math.min(Math.max(tt.x, 104), window.innerWidth - 104);
   return (
     <div style={{ position: "fixed", left, top: tt.y - 8, transform: "translate(-50%,-100%)", zIndex: 200 }}
-      className="pointer-events-none w-52 rounded-xl bg-gray-900 border border-gray-700 shadow-2xl p-3 text-xs"
-    >
+      className="pointer-events-none w-52 rounded-xl bg-gray-900 border border-gray-700 shadow-2xl p-3 text-xs">
       <div className="flex items-center justify-between mb-2">
         <span className="font-semibold text-gray-200 truncate max-w-[140px]">{processName}</span>
         <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${cfg.bg} ${cfg.text} border ${cfg.border}`}>{cfg.label}</span>
@@ -91,18 +105,35 @@ function CellTooltip({ tt }: { tt: TooltipState }) {
         </div>
       ) : (
         <div className="space-y-1 text-gray-400">
-          {cell.startTime && <div className="flex justify-between"><span>Start</span><span className="text-gray-200 font-mono">{fmtTime(cell.startTime)}</span></div>}
+          {cell.startTime && (
+            <div className="flex justify-between">
+              <span>Start</span>
+              <span className="text-gray-200 font-mono">{fmtTime(cell.startTime)}</span>
+            </div>
+          )}
           {cell.durationSec !== undefined && (
             <div className="flex justify-between">
               <span>Duration</span>
               <span className={`font-mono ${cell.status === "SLABreach" ? "text-orange-300" : "text-gray-200"}`}>
                 {fmtDuration(cell.durationSec)}
-                {processDef && cell.status === "SLABreach" && <span className="text-gray-500 ml-1">/ {fmtDuration(processDef.slaMaxDuration)}</span>}
+                {processDef && cell.status === "SLABreach" && (
+                  <span className="text-gray-500 ml-1">/ {fmtDuration(processDef.slaMaxDuration)}</span>
+                )}
               </span>
             </div>
           )}
-          {(cell.volumeCount ?? 0) > 0 && <div className="flex justify-between"><span>Volume</span><span className="text-gray-200">{cell.volumeCount?.toLocaleString()}</span></div>}
-          {cell.runCount > 1 && <div className="flex justify-between"><span>Runs today</span><span className="text-gray-200">{cell.runCount}</span></div>}
+          {(cell.volumeCount ?? 0) > 0 && (
+            <div className="flex justify-between">
+              <span>Volume</span>
+              <span className="text-gray-200">{cell.volumeCount?.toLocaleString()}</span>
+            </div>
+          )}
+          {cell.runCount > 1 && (
+            <div className="flex justify-between">
+              <span>Runs today</span>
+              <span className="text-gray-200">{cell.runCount}</span>
+            </div>
+          )}
           {cell.errorMessage && <p className="mt-1 text-red-400 truncate">{cell.errorMessage}</p>}
         </div>
       )}
@@ -122,31 +153,31 @@ function CellBadge({ cell, processDef, isToday, onErrorClick, onTipEnter, onTipL
   if (cell.status === "None" && isToday && processDef?.botType === "Scheduled" && processDef?.expectedStartTime) {
     return (
       <div onMouseEnter={onTipEnter} onMouseLeave={onTipLeave}
-        className="w-8 h-8 rounded-full border-2 border-dashed border-indigo-600/50 flex items-center justify-center cursor-default">
-        <span className="w-1.5 h-1.5 rounded-full bg-indigo-600/40" />
+        className="w-7 h-7 rounded-full border-2 border-dashed border-indigo-500/60 flex items-center justify-center cursor-default mx-auto">
+        <span className="w-1.5 h-1.5 rounded-full bg-indigo-500/50 animate-pulse" />
       </div>
     );
   }
   if (cell.status === "None") {
     return (
       <div onMouseEnter={onTipEnter} onMouseLeave={onTipLeave}
-        className="w-8 h-8 rounded-md bg-gray-800/60 border border-gray-700/50 flex items-center justify-center">
-        <span className="text-[10px] text-gray-700">—</span>
+        className="w-7 h-7 rounded-md bg-gray-800/40 border border-gray-700/30 flex items-center justify-center mx-auto">
+        <span className="text-[10px] text-gray-800">·</span>
       </div>
     );
   }
   const cfg = STATUS_CFG[cell.status];
   return (
-    <div className="relative inline-flex" onMouseEnter={onTipEnter} onMouseLeave={onTipLeave}>
+    <div className="relative inline-flex mx-auto" onMouseEnter={onTipEnter} onMouseLeave={onTipLeave}>
       <button onClick={cell.status === "Failed" ? onErrorClick : undefined}
-        className={`w-8 h-8 rounded-md border text-xs font-bold flex items-center justify-center transition-transform hover:scale-110
+        className={`w-7 h-7 rounded-md border text-xs font-bold flex items-center justify-center transition-transform hover:scale-110
           ${cfg.bg} ${cfg.border} ${cfg.text}
-          ${cell.status === "Failed" ? "cursor-pointer animate-pulse hover:animate-none" : "cursor-default"}`}>
+          ${cell.status === "Failed" ? "cursor-pointer ring-1 ring-red-600/50 animate-pulse hover:animate-none" : "cursor-default"}`}>
         {cfg.symbol}
       </button>
       {cell.runCount > 1 && (
-        <span className="absolute -top-1.5 -right-1.5 bg-gray-700 text-gray-200 text-[9px] font-bold rounded-full px-1 py-0.5 border border-gray-600 leading-none z-10">
-          {cell.runCount}x
+        <span className="absolute -top-1.5 -right-1.5 bg-gray-700 text-gray-200 text-[8px] font-bold rounded-full w-4 h-4 flex items-center justify-center border border-gray-600 z-10">
+          {cell.runCount}
         </span>
       )}
     </div>
@@ -226,7 +257,6 @@ function SideSheet({ processName, processDef, onClose, onRefresh }: SideSheetPro
           </div>
           <button onClick={onClose} className="text-gray-500 hover:text-white p-1 shrink-0"><X size={16} /></button>
         </div>
-
         <div className="flex-1 overflow-y-auto px-5 py-5 space-y-4">
           <div>
             <label className="text-[11px] font-semibold uppercase tracking-widest text-gray-400 block mb-1.5">Bot Type</label>
@@ -249,7 +279,6 @@ function SideSheet({ processName, processDef, onClose, onRefresh }: SideSheetPro
           </div>
           {error && <p className="text-xs text-red-400 bg-red-900/20 border border-red-800/40 rounded-lg px-3 py-2">{error}</p>}
         </div>
-
         <div className="px-5 py-4 border-t border-gray-800 space-y-2">
           <button onClick={save} disabled={saving}
             className="w-full py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-sm font-semibold transition-colors">
@@ -354,27 +383,38 @@ function AddBotDialog({ open, onClose, onRefresh }: { open: boolean; onClose: ()
 function TableSkeleton() {
   return (
     <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden animate-pulse">
-      {/* Header */}
-      <div className="border-b border-gray-800 flex items-center gap-2 px-4 py-3">
-        <div className="w-28 h-2.5 bg-gray-800 rounded" />
-        <div className="w-12 h-2.5 bg-gray-800 rounded" />
-        <div className="w-10 h-2.5 bg-gray-800 rounded" />
-        <div className="w-10 h-2.5 bg-gray-800 rounded" />
+      {/* Month header row */}
+      <div className="border-b border-gray-800 flex items-center gap-1 px-4 py-2">
+        <div className="w-28 h-2 bg-gray-800 rounded" />
+        <div className="flex-1" />
+        <div className="w-20 h-2 bg-gray-800 rounded mx-4" />
+      </div>
+      {/* Day header row */}
+      <div className="border-b border-gray-800 flex items-center gap-1 px-4 py-2">
+        <div className="w-24 h-2 bg-gray-800 rounded" />
+        <div className="w-10 h-2 bg-gray-800 rounded" />
+        <div className="w-8 h-2 bg-gray-800 rounded" />
+        <div className="w-10 h-2 bg-gray-800 rounded" />
+        <div className="w-8 h-2 bg-gray-800 rounded" />
         <div className="flex-1" />
         {Array.from({ length: 14 }).map((_, i) => (
-          <div key={i} className="w-8 h-2.5 bg-gray-800 rounded mx-0.5" />
+          <div key={i} className="w-7 h-7 bg-gray-800 rounded flex flex-col items-center gap-0.5 mx-0.5 py-1">
+            <div className="w-3 h-1 bg-gray-700 rounded" />
+            <div className="w-4 h-1.5 bg-gray-700 rounded" />
+          </div>
         ))}
       </div>
-      {/* Rows */}
+      {/* Body rows */}
       {Array.from({ length: 5 }).map((_, row) => (
-        <div key={row} className="border-b border-gray-800/40 flex items-center gap-2 px-4 py-3.5">
-          <div className="w-32 h-3 bg-gray-800 rounded" />
-          <div className="w-12 h-3 bg-gray-800 rounded" />
+        <div key={row} className="border-b border-gray-800/40 flex items-center gap-1 px-4 py-3">
+          <div className="w-28 h-3 bg-gray-800 rounded" />
           <div className="w-10 h-3 bg-gray-800 rounded" />
+          <div className="w-8 h-3 bg-gray-800 rounded" />
           <div className="w-10 h-3 bg-gray-800 rounded" />
+          <div className="w-8 h-3 bg-gray-800 rounded" />
           <div className="flex-1" />
           {Array.from({ length: 14 }).map((_, i) => (
-            <div key={i} className="w-8 h-8 bg-gray-800/60 rounded-md mx-0.5" />
+            <div key={i} className="w-7 h-7 bg-gray-800/60 rounded-md mx-0.5" />
           ))}
         </div>
       ))}
@@ -390,6 +430,10 @@ interface BotTableProps {
   showStartCol: boolean;
   todayIndex: number;
   todayInRange: boolean;
+  rangeStart: Date;
+  fromDate: string;
+  toDate: string;
+  allTimeCounts: Record<string, number>;
   processDefMap: Map<string, ProcessDefinition>;
   onSideSheet: (name: string) => void;
   onError: (info: ErrorInfo) => void;
@@ -397,110 +441,200 @@ interface BotTableProps {
   onTipLeave: () => void;
 }
 
-function BotTable({ rows, showStartCol, todayIndex, todayInRange, processDefMap, onSideSheet, onError, onTipEnter, onTipLeave }: BotTableProps) {
+// Shared sticky TD/TH style for fixed columns
+const stickyCell = "bg-[#111827] group-hover:bg-[#161e2e] transition-colors border-b border-gray-800/60";
+const stickyHd   = "bg-[#111827] border-b border-gray-700/80";
+
+function BotTable({ rows, showStartCol, todayIndex, todayInRange, rangeStart, fromDate, toDate, allTimeCounts, processDefMap, onSideSheet, onError, onTipEnter, onTipLeave }: BotTableProps) {
   if (!rows.length) return null;
 
-  // Sticky left offsets (Process=152 | Start?=68 | SLA=60 | Avg=72 | %=48)
+  // Pixel offsets for sticky columns: Process=152 | Start?=68 | SLA=60 | Avg=72 | %=48 | Runs=48
   const L = showStartCol
-    ? { start: 152, sla: 220, avg: 280, pct: 352 }
-    : {             sla: 152, avg: 212, pct: 284 };
+    ? { start: 152, sla: 220, avg: 280, pct: 352, runs: 400 }
+    : {             sla: 152, avg: 212, pct: 284, runs: 332 };
+
+  // Shadow style for the right edge of the sticky panel (last sticky col = Runs)
+  const runsShadow: React.CSSProperties = {
+    left: L.runs,
+    boxShadow: "4px 0 12px -2px rgba(0,0,0,0.6)",
+  };
+
+  const monthGroups = buildMonthGroups(rows[0].cells, rangeStart);
 
   return (
-    <div className="bg-gray-900 rounded-t-xl border border-gray-800 border-b-0 overflow-x-auto">
-      <table className="min-w-max w-full text-sm border-collapse">
+    <div className="rounded-t-xl border border-gray-800 border-b-0 overflow-x-auto" style={{ background: "#111827" }}>
+      <table className="min-w-max w-full text-sm" style={{ borderCollapse: "separate", borderSpacing: 0 }}>
         <thead>
-          <tr className="border-b border-gray-800">
+          {/* ── Row 1: fixed col headers (rowspan=2) + month group labels ── */}
+          <tr>
             {/* Process */}
-            <th className="text-left px-4 py-2.5 sticky left-0 bg-gray-900 z-20 w-[152px] min-w-[152px]">
-              <span className="text-[11px] font-semibold uppercase tracking-widest text-gray-400">Process</span>
+            <th rowSpan={2}
+              className={`text-left px-4 sticky left-0 z-20 w-[152px] min-w-[152px] align-bottom pb-2 ${stickyHd}`}>
+              <span className="text-[10px] font-semibold uppercase tracking-widest text-gray-500">Process</span>
             </th>
             {/* Start — Scheduled only */}
             {showStartCol && (
-              <th style={{ left: L.start }} className="px-2 py-2.5 text-left sticky bg-gray-900 z-20 w-[68px] min-w-[68px]">
-                <span className="text-[11px] font-semibold uppercase tracking-widest text-gray-400">Start</span>
+              <th rowSpan={2} style={{ left: L.start }}
+                className={`px-3 text-left sticky z-20 w-[68px] min-w-[68px] align-bottom pb-2 ${stickyHd}`}>
+                <span className="text-[10px] font-semibold uppercase tracking-widest text-gray-500">Start</span>
               </th>
             )}
             {/* SLA */}
-            <th style={{ left: L.sla }} className="px-2 py-2.5 text-left sticky bg-gray-900 z-20 w-[60px] min-w-[60px]">
-              <span className="text-[11px] font-semibold uppercase tracking-widest text-gray-400">SLA</span>
+            <th rowSpan={2} style={{ left: L.sla }}
+              className={`px-3 text-left sticky z-20 w-[60px] min-w-[60px] align-bottom pb-2 ${stickyHd}`}>
+              <span className="text-[10px] font-semibold uppercase tracking-widest text-gray-500">SLA</span>
             </th>
-            {/* Avg Run Time */}
-            <th style={{ left: L.avg }} className="px-2 py-2.5 text-left sticky bg-gray-900 z-20 w-[72px] min-w-[72px]">
-              <span className="text-[11px] font-semibold uppercase tracking-widest text-gray-400">Avg</span>
+            {/* Avg */}
+            <th rowSpan={2} style={{ left: L.avg }}
+              className={`px-3 text-left sticky z-20 w-[72px] min-w-[72px] align-bottom pb-2 ${stickyHd}`}>
+              <span className="text-[10px] font-semibold uppercase tracking-widest text-gray-500">Avg</span>
             </th>
-            {/* Success % + divider */}
-            <th style={{ left: L.pct }} className="px-2 py-2.5 text-center sticky bg-gray-900 z-20 w-[48px] min-w-[48px] border-r border-gray-700/60">
-              <span className="text-[11px] font-semibold uppercase tracking-widest text-gray-400">%</span>
+            {/* % */}
+            <th rowSpan={2} style={{ left: L.pct }}
+              className={`px-2 text-center sticky z-20 w-[48px] min-w-[48px] align-bottom pb-2 ${stickyHd}`}>
+              <span className="text-[10px] font-semibold uppercase tracking-widest text-gray-500">Rate</span>
             </th>
-            {/* Day columns */}
-            {rows[0].cells.map((c) => (
-              <th key={c.dayIndex}
-                className={`px-0.5 py-2.5 text-center font-normal w-9 text-[11px] ${c.dayIndex === todayIndex && todayInRange ? "text-indigo-400 font-semibold" : "text-gray-600"}`}>
-                {c.dateLabel}
+            {/* Runs — has the right-edge shadow */}
+            <th rowSpan={2} style={runsShadow}
+              className={`px-2 text-center sticky z-20 w-[48px] min-w-[48px] align-bottom pb-2 border-r border-gray-700/50 ${stickyHd}`}>
+              <span className="text-[10px] font-semibold uppercase tracking-widest text-gray-500">Runs</span>
+            </th>
+
+            {/* Month group labels — each spans its days */}
+            {monthGroups.map((g, gi) => (
+              <th key={gi} colSpan={g.span}
+                className={`text-center text-[10px] font-semibold uppercase tracking-widest text-gray-500 py-1.5
+                  border-b border-gray-800/60 ${gi > 0 ? "border-l border-gray-700/40" : ""}`}>
+                {g.label}
               </th>
             ))}
           </tr>
+
+          {/* ── Row 2: weekday + day number headers ── */}
+          <tr>
+            {rows[0].cells.map((c) => {
+              const d = new Date(rangeStart.getTime() + (c.dayIndex - 1) * 86_400_000);
+              const dow      = DOW[d.getDay()];
+              const dayNum   = d.getDate();
+              const isWeekend = d.getDay() === 0 || d.getDay() === 6;
+              const isToday   = c.dayIndex === todayIndex && todayInRange;
+              const newMonth  = dayNum === 1 && c.dayIndex > 1;
+              return (
+                <th key={c.dayIndex}
+                  className={`relative w-[36px] min-w-[36px] py-1.5 px-0 text-center
+                    border-b border-gray-700/80
+                    ${newMonth ? "border-l border-gray-700/40" : ""}
+                    ${isToday  ? "bg-indigo-900/30" : isWeekend ? "bg-gray-800/30" : ""}`}>
+                  {/* Today top accent */}
+                  {isToday && (
+                    <div className="absolute top-0 inset-x-0 h-[2px] bg-indigo-500 rounded-b" />
+                  )}
+                  <div className="flex flex-col items-center leading-none gap-[3px]">
+                    <span className={`text-[9px] font-medium tracking-wide
+                      ${isToday ? "text-indigo-400" : isWeekend ? "text-gray-700" : "text-gray-600"}`}>
+                      {dow}
+                    </span>
+                    <span className={`text-[11px] font-bold
+                      ${isToday ? "text-indigo-300" : isWeekend ? "text-gray-600" : "text-gray-400"}`}>
+                      {dayNum}
+                    </span>
+                  </div>
+                </th>
+              );
+            })}
+          </tr>
         </thead>
+
         <tbody>
-          {rows.map((row, i) => {
-            const pct      = successPct(row.cells);
-            const pctNum   = pct === "—" ? null : parseInt(pct);
-            const pctColor = pctNum === null ? "text-gray-600" : pctNum >= 90 ? "text-emerald-400" : pctNum >= 70 ? "text-yellow-400" : "text-red-400";
-            const avg      = avgDuration(row.cells);
-            const def      = processDefMap.get(row.processName);
-            const rowBg    = i % 2 === 0 ? "" : "bg-gray-800/25";
+          {rows.map((row) => {
+            const pct       = successPct(row.cells);
+            const pctNum    = pct === "—" ? null : parseInt(pct);
+            const pctColor  = pctNum === null ? "text-gray-700" : pctNum >= 90 ? "text-emerald-400" : pctNum >= 70 ? "text-yellow-400" : "text-red-400";
+            const avg       = avgDuration(row.cells);
+            const def       = processDefMap.get(row.processName);
+            // All-time total — matches the bot detail page's "Total Runs" KPI
+            const totalRuns = allTimeCounts[row.processName] ?? 0;
 
             return (
-              <tr key={row.processName}>
+              <tr key={row.processName} className="group">
                 {/* Process */}
-                <td className="px-4 py-2.5 sticky left-0 z-10 w-[152px] min-w-[152px] bg-gray-900">
+                <td className={`px-4 py-2.5 sticky left-0 z-10 w-[152px] min-w-[152px] ${stickyCell}`}>
                   <div className="flex items-center gap-1.5">
-                    <Link
-                      href={`/process/${encodeURIComponent(row.processName)}`}
+                    <Link href={`/process/${encodeURIComponent(row.processName)}?from=${fromDate}&to=${toDate}`}
                       className="text-gray-200 font-medium text-sm hover:text-indigo-300 transition-colors truncate max-w-[112px]"
-                      title={`View run history for ${row.processName}`}
-                    >
+                      title={row.processName}>
                       {row.processName}
                     </Link>
-                    <button
-                      onClick={() => onSideSheet(row.processName)}
-                      title="Edit bot settings"
-                      className="text-gray-700 hover:text-indigo-400 transition-colors shrink-0 p-0.5 rounded"
-                    >
+                    <button onClick={() => onSideSheet(row.processName)} title="Edit bot settings"
+                      className="text-gray-700 hover:text-indigo-400 transition-colors shrink-0 p-0.5 rounded">
                       <Settings2 size={10} />
                     </button>
                   </div>
-                  {row.isRegisteredOnly && <span className="text-[10px] text-gray-600 block leading-tight mt-0.5">No runs yet</span>}
+                  {row.isRegisteredOnly && (
+                    <span className="text-[10px] text-gray-700 block leading-tight mt-0.5 font-mono">no runs</span>
+                  )}
                 </td>
+
                 {/* Start */}
                 {showStartCol && (
-                  <td style={{ left: L.start }} className="px-2 py-2.5 sticky z-10 w-[68px] min-w-[68px] bg-gray-900">
-                    <span className="text-[11px] font-mono text-gray-400">{def?.expectedStartTime || <span className="text-gray-700">—</span>}</span>
+                  <td style={{ left: L.start }} className={`px-3 py-2.5 sticky z-10 w-[68px] min-w-[68px] ${stickyCell}`}>
+                    <span className="text-[11px] font-mono text-gray-400">
+                      {def?.expectedStartTime || <span className="text-gray-700">—</span>}
+                    </span>
                   </td>
                 )}
+
                 {/* SLA */}
-                <td style={{ left: L.sla }} className="px-2 py-2.5 sticky z-10 w-[60px] min-w-[60px] bg-gray-900">
-                  <span className="text-[11px] text-gray-400">{def ? fmtDuration(def.slaMaxDuration) : <span className="text-gray-700">—</span>}</span>
+                <td style={{ left: L.sla }} className={`px-3 py-2.5 sticky z-10 w-[60px] min-w-[60px] ${stickyCell}`}>
+                  <span className="text-[11px] font-mono text-gray-400">
+                    {def ? fmtDuration(def.slaMaxDuration) : <span className="text-gray-700">—</span>}
+                  </span>
                 </td>
-                {/* Avg Run Time */}
-                <td style={{ left: L.avg }} className="px-2 py-2.5 sticky z-10 w-[72px] min-w-[72px] bg-gray-900">
+
+                {/* Avg */}
+                <td style={{ left: L.avg }} className={`px-3 py-2.5 sticky z-10 w-[72px] min-w-[72px] ${stickyCell}`}>
                   <span className="text-[11px] font-mono text-gray-400">{avg}</span>
                 </td>
-                {/* Success % */}
-                <td style={{ left: L.pct }} className={`px-2 py-2.5 text-center text-xs font-bold sticky z-10 w-[48px] min-w-[48px] border-r border-gray-700/60 bg-gray-900 ${pctColor}`}>
+
+                {/* % */}
+                <td style={{ left: L.pct }}
+                  className={`px-2 py-2.5 text-center text-xs font-bold sticky z-10 w-[48px] min-w-[48px] ${stickyCell} ${pctColor}`}>
                   {pct}
                 </td>
+
+                {/* Runs */}
+                <td style={runsShadow}
+                  className={`px-2 py-2.5 text-center text-xs font-bold sticky z-10 w-[48px] min-w-[48px] border-r border-gray-700/50 ${stickyCell} text-gray-300`}>
+                  {totalRuns > 0 ? totalRuns : <span className="text-gray-700">—</span>}
+                </td>
+
                 {/* Day cells */}
                 {row.cells.map((cell) => {
-                  const isToday = cell.dayIndex === todayIndex && todayInRange;
+                  const d        = new Date(rangeStart.getTime() + (cell.dayIndex - 1) * 86_400_000);
+                  const isWeekend = d.getDay() === 0 || d.getDay() === 6;
+                  const isToday   = cell.dayIndex === todayIndex && todayInRange;
+                  const newMonth  = d.getDate() === 1 && cell.dayIndex > 1;
                   return (
-                    <td key={cell.dayIndex} className={`px-0.5 py-2 text-center ${isToday ? "bg-indigo-950/30" : rowBg}`}>
-                      <CellBadge
-                        cell={cell} processDef={def} isToday={isToday}
-                        onErrorClick={() => onError({ transactionId: cell.transactionId ?? "", processName: row.processName, dayLabel: cell.dateLabel, errorMessage: cell.errorMessage ?? "No error message recorded.", screenshotPath: cell.screenshotPath ?? null })}
-                        onTipEnter={(e) => onTipEnter(e, cell, row.processName)}
-                        onTipLeave={onTipLeave}
-                      />
+                    <td key={cell.dayIndex}
+                      className={`px-0 py-2 text-center border-b border-gray-800/30 transition-colors
+                        ${isToday   ? "bg-indigo-950/25 group-hover:bg-indigo-950/40"
+                        : isWeekend ? "bg-gray-800/20 group-hover:bg-gray-800/30"
+                        :             "group-hover:bg-gray-800/20"}
+                        ${newMonth ? "border-l border-gray-700/30" : ""}`}>
+                      <div className="flex justify-center">
+                        <CellBadge
+                          cell={cell} processDef={def} isToday={isToday}
+                          onErrorClick={() => onError({
+                            transactionId: cell.transactionId ?? "",
+                            processName: row.processName,
+                            dayLabel: cell.dateLabel,
+                            errorMessage: cell.errorMessage ?? "No error message recorded.",
+                            screenshotPath: cell.screenshotPath ?? null,
+                          })}
+                          onTipEnter={(e) => onTipEnter(e, cell, row.processName)}
+                          onTipLeave={onTipLeave}
+                        />
+                      </div>
                     </td>
                   );
                 })}
@@ -516,7 +650,7 @@ function BotTable({ rows, showStartCol, todayIndex, todayInRange, processDefMap,
 // ── Legend ────────────────────────────────────────────────────────────────────
 function Legend() {
   return (
-    <div className="flex flex-wrap items-center gap-4 px-4 py-3 bg-gray-900 border border-gray-800 rounded-b-xl border-t-0 text-[11px] text-gray-500">
+    <div className="flex flex-wrap items-center gap-4 px-4 py-3 border border-gray-800 rounded-b-xl border-t-0 text-[11px] text-gray-500" style={{ background: "#111827" }}>
       {(["Success", "LateStart", "SLABreach", "Failed"] as CellStatus[]).map((s) => {
         const cfg = STATUS_CFG[s];
         return (
@@ -527,10 +661,14 @@ function Legend() {
         );
       })}
       <span className="flex items-center gap-1.5">
-        <span className="w-3 h-3 rounded-full border-2 border-dashed border-indigo-600/50 inline-block" />
+        <span className="w-3 h-3 rounded-full border-2 border-dashed border-indigo-500/60 inline-block" />
         Expected today
       </span>
-      <span className="ml-auto text-gray-600">Click name for history · ⚙ to edit</span>
+      <span className="flex items-center gap-1.5">
+        <span className="w-3 h-3 bg-gray-800/30 inline-block rounded-sm" />
+        Weekend
+      </span>
+      <span className="ml-auto text-gray-600 text-[10px]">Click name for history · ⚙ to edit</span>
     </div>
   );
 }
@@ -540,12 +678,15 @@ interface Props {
   matrix: ProcessMatrix[];
   totalDays: number;
   startDate: string;
+  fromDate: string;
+  toDate: string;
+  allTimeCounts: Record<string, number>;
   processes: ProcessDefinition[];
   onRefresh: () => void;
   loading?: boolean;
 }
 
-export default function MatrixGrid({ matrix, totalDays, startDate, processes, onRefresh, loading }: Props) {
+export default function MatrixGrid({ matrix, totalDays, startDate, fromDate, toDate, allTimeCounts, processes, onRefresh, loading }: Props) {
   const [tooltip,   setTooltip]   = useState<TooltipState | null>(null);
   const [errorInfo, setErrorInfo] = useState<ErrorInfo | null>(null);
   const [sideSheet, setSideSheet] = useState<{ processName: string } | null>(null);
@@ -562,17 +703,23 @@ export default function MatrixGrid({ matrix, totalDays, startDate, processes, on
 
   function handleTipEnter(e: React.MouseEvent, cell: MatrixCell, processName: string) {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    setTooltip({ cell, processName, processDef: processDefMap.get(processName), x: rect.left + rect.width / 2, y: rect.top, todayExpected: cell.dayIndex === todayIndex && todayInRange });
+    setTooltip({
+      cell, processName,
+      processDef: processDefMap.get(processName),
+      x: rect.left + rect.width / 2,
+      y: rect.top,
+      todayExpected: cell.dayIndex === todayIndex && todayInRange,
+    });
   }
 
-  // Compute dateLabel matching server logic, so empty rows use consistent labels
+  // Compute dateLabel matching server logic for empty rows
   function makeDateLabel(i: number): string {
     const d = new Date(rangeStart.getTime() + i * 86_400_000);
     const sameMonth = d.getMonth() === rangeStart.getMonth();
     return sameMonth ? String(d.getDate()) : `${d.getMonth() + 1}/${d.getDate()}`;
   }
 
-  // Build allRows: matrix rows + registered-only rows
+  // Build allRows: matrix rows + registered-only rows (no runs yet)
   const matrixNames = new Set(matrix.map((r) => r.processName));
   const emptyRow = (p: ProcessDefinition): RowData => ({
     processName: p.processName,
@@ -590,7 +737,6 @@ export default function MatrixGrid({ matrix, totalDays, startDate, processes, on
     ...processes.filter((p) => !matrixNames.has(p.processName)).map(emptyRow),
   ];
 
-  // Split by botType
   const scheduledRows = allRows.filter((r) => {
     const def = processDefMap.get(r.processName);
     return !def || def.botType === "Scheduled";
@@ -603,20 +749,15 @@ export default function MatrixGrid({ matrix, totalDays, startDate, processes, on
   const isEmpty = scheduledRows.length === 0 && onDemandRows.length === 0;
 
   const tableProps = {
-    todayIndex, todayInRange, processDefMap,
+    todayIndex, todayInRange, rangeStart, fromDate, toDate, allTimeCounts, processDefMap,
     onSideSheet: (name: string) => setSideSheet({ processName: name }),
     onError: setErrorInfo,
     onTipEnter: handleTipEnter,
     onTipLeave: () => setTooltip(null),
   };
 
-  // Show skeleton while loading
   if (loading) {
-    return (
-      <div className="space-y-5">
-        <TableSkeleton />
-      </div>
-    );
+    return <TableSkeleton />;
   }
 
   if (isEmpty) {
@@ -624,7 +765,9 @@ export default function MatrixGrid({ matrix, totalDays, startDate, processes, on
       <>
         <div className="bg-gray-900 rounded-xl border border-gray-800 p-8 text-center text-gray-500 text-sm">
           No bots registered yet.{" "}
-          <button onClick={() => setShowAdd(true)} className="text-indigo-400 hover:text-indigo-300 underline underline-offset-2">Add the first one</button>
+          <button onClick={() => setShowAdd(true)} className="text-indigo-400 hover:text-indigo-300 underline underline-offset-2">
+            Add the first one
+          </button>
         </div>
         <AddBotDialog open={showAdd} onClose={() => setShowAdd(false)} onRefresh={onRefresh} />
       </>
@@ -633,9 +776,9 @@ export default function MatrixGrid({ matrix, totalDays, startDate, processes, on
 
   return (
     <>
-      {/* Section header + add button */}
+      {/* Header + add button */}
       <div className="flex items-center justify-between mb-3">
-        <span className="text-xs text-gray-600">Click name for run history · ⚙ to edit · Dates scroll right</span>
+        <span className="text-xs text-gray-600">Click name for history · ⚙ to edit · Scroll right for dates</span>
         <button onClick={() => setShowAdd(true)}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition-colors">
           <Plus size={12} /> Add Bot
@@ -645,10 +788,12 @@ export default function MatrixGrid({ matrix, totalDays, startDate, processes, on
       {/* Scheduled Bots */}
       {scheduledRows.length > 0 && (
         <div className="mb-1">
-          <div className="flex items-center gap-2 px-1 mb-1.5">
+          <div className="flex items-center gap-2 px-1 mb-2">
             <Clock size={13} className="text-indigo-400" />
             <span className="text-xs font-semibold text-indigo-300 uppercase tracking-widest">Scheduled Bots</span>
-            <span className="text-xs text-gray-600">{scheduledRows.length} bot{scheduledRows.length !== 1 ? "s" : ""}</span>
+            <span className="text-[11px] text-gray-600 bg-gray-800 px-1.5 py-0.5 rounded-full">
+              {scheduledRows.length}
+            </span>
           </div>
           <BotTable rows={scheduledRows} showStartCol={true} {...tableProps} />
           {onDemandRows.length === 0 && <Legend />}
@@ -657,18 +802,19 @@ export default function MatrixGrid({ matrix, totalDays, startDate, processes, on
 
       {/* On-Demand Bots */}
       {onDemandRows.length > 0 && (
-        <div className={scheduledRows.length > 0 ? "mt-5" : ""}>
-          <div className="flex items-center gap-2 px-1 mb-1.5">
+        <div className={scheduledRows.length > 0 ? "mt-6" : ""}>
+          <div className="flex items-center gap-2 px-1 mb-2">
             <Zap size={13} className="text-yellow-400" />
             <span className="text-xs font-semibold text-yellow-300 uppercase tracking-widest">On-Demand Bots</span>
-            <span className="text-xs text-gray-600">{onDemandRows.length} bot{onDemandRows.length !== 1 ? "s" : ""}</span>
+            <span className="text-[11px] text-gray-600 bg-gray-800 px-1.5 py-0.5 rounded-full">
+              {onDemandRows.length}
+            </span>
           </div>
           <BotTable rows={onDemandRows} showStartCol={false} {...tableProps} />
           <Legend />
         </div>
       )}
 
-      {/* Tooltip / Error Modal / Side Sheet / Add Dialog */}
       {tooltip   && <CellTooltip tt={tooltip} />}
       {errorInfo && <ErrorModal info={errorInfo} onClose={() => setErrorInfo(null)} />}
       {sideSheet && (

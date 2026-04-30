@@ -3,13 +3,21 @@
 import { PieChart, Pie, Cell, Tooltip } from "recharts";
 import { DashboardStats, ProcessMatrix, ProcessDefinition, CellStatus } from "@/types/rpa";
 
-const STATUS_CFG: Record<CellStatus, { bg: string; text: string; border: string; label: string; hex: string }> = {
-  None:      { bg: "bg-gray-800",       text: "text-gray-500",    border: "border-gray-700",    label: "No Run",     hex: "#374151" },
-  Success:   { bg: "bg-emerald-900/40", text: "text-emerald-300", border: "border-emerald-700", label: "Success",    hex: "#10b981" },
-  LateStart: { bg: "bg-yellow-900/40",  text: "text-yellow-300",  border: "border-yellow-700",  label: "Late Start", hex: "#eab308" },
-  SLABreach: { bg: "bg-orange-900/40",  text: "text-orange-300",  border: "border-orange-700",  label: "SLA Breach", hex: "#f97316" },
-  Failed:    { bg: "bg-red-900/40",     text: "text-red-300",     border: "border-red-700",     label: "Failed",     hex: "#ef4444" },
-};
+// Aligned with API breakdown keys and matrix cell statuses
+const BREAKDOWN_CFG: {
+  key: "success" | "lateStart" | "slaBreach" | "failed";
+  status: CellStatus;
+  label: string;
+  hex: string;
+  bg: string;
+  text: string;
+  border: string;
+}[] = [
+  { key: "success",   status: "Success",   label: "Success",    hex: "#10b981", bg: "bg-emerald-900/40", text: "text-emerald-300", border: "border-emerald-700" },
+  { key: "lateStart", status: "LateStart", label: "Late Start", hex: "#eab308", bg: "bg-yellow-900/40",  text: "text-yellow-300",  border: "border-yellow-700"  },
+  { key: "slaBreach", status: "SLABreach", label: "SLA Breach", hex: "#f97316", bg: "bg-orange-900/40",  text: "text-orange-300",  border: "border-orange-700"  },
+  { key: "failed",    status: "Failed",    label: "Failed",     hex: "#ef4444", bg: "bg-red-900/40",     text: "text-red-300",     border: "border-red-700"     },
+];
 
 const BAR_COLOR: Partial<Record<CellStatus, string>> = {
   Success:   "bg-emerald-500",
@@ -72,45 +80,51 @@ export default function TodaySummary({ stats, todayMatrix, processes, loading }:
   if (loading) return <Skeleton />;
 
   const processDefMap = new Map(processes.map((p) => [p.processName, p]));
+  const bd = stats.breakdown;
 
-  // Status counts for donut
-  const statusCounts: Partial<Record<CellStatus, number>> = {};
-  todayMatrix?.forEach(({ cells }) => {
-    const cell = cells.find((c) => c.status !== "None");
-    if (cell) statusCounts[cell.status] = (statusCounts[cell.status] ?? 0) + 1;
-  });
+  // ── Donut: use exact API breakdown counts, not matrix-derived counts ──────
+  // Matrix cells collapse multiple runs per bot per day into one cell
+  // (worst-status wins), so iterating matrix would give bot-level counts,
+  // not run-level counts. The API breakdown gives the exact per-run counts.
+  const pieData = BREAKDOWN_CFG
+    .map((cfg) => ({
+      name:  cfg.label,
+      value: bd?.[cfg.key] ?? 0,
+      fill:  cfg.hex,
+      cfg,
+    }))
+    .filter((d) => d.value > 0);
 
-  const pieData = (["Success", "LateStart", "SLABreach", "Failed"] as CellStatus[])
-    .filter((s) => (statusCounts[s] ?? 0) > 0)
-    .map((s) => ({
-      name: STATUS_CFG[s].label,
-      value: statusCounts[s]!,
-      fill: STATUS_CFG[s].hex,
-    }));
-
-  // Per-bot runs today, worst-status first
+  // ── Per-bot run list: one row per bot that ran today ─────────────────────
+  // todayMatrix is fetched with from=today&to=today → exactly one cell per bot.
+  // That cell's runCount = how many times this bot ran today per the API.
   const todayRuns = (todayMatrix ?? [])
     .map(({ processName, cells }) => ({
       processName,
-      cell: cells.find((c) => c.status !== "None") ?? cells[0],
+      cell: cells[0],                         // single-day range → always one cell
       def: processDefMap.get(processName),
     }))
-    .filter(({ cell }) => cell.status !== "None")
+    .filter(({ cell }) => cell && cell.runCount > 0)  // only bots that actually ran
     .sort(
       (a, b) =>
         (STATUS_PRIORITY[b.cell.status] ?? 0) - (STATUS_PRIORITY[a.cell.status] ?? 0)
     );
 
-  const ranNames = new Set(todayRuns.map((r) => r.processName));
+  // Explicit sum of every bot's runCount — identical to what each N× card shows
+  const totalTodayRuns = todayRuns.reduce((sum, { cell }) => sum + cell.runCount, 0);
+
+  const ranNames    = new Set(todayRuns.map((r) => r.processName));
   const pendingCount = processes.filter((p) => !ranNames.has(p.processName)).length;
 
-  const failed = Math.max(0, stats.totalRuns - Math.round((stats.successRate / 100) * stats.totalRuns));
-  const slaIssues = Math.max(0, stats.totalRuns - Math.round((stats.slaCompliance / 100) * stats.totalRuns));
+  // Exact sub-text from breakdown, not back-calculated from rounded percentages
+  const failedCount    = bd?.failed    ?? 0;
+  const slaIssueCount  = bd?.slaIssues ?? 0;
 
   return (
     <div className="space-y-4">
-      {/* Row 1: Donut + KPIs */}
+      {/* ── Row 1: Donut + KPI cards ─────────────────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-[200px_1fr] gap-4">
+
         {/* Donut */}
         <div className="bg-gray-900 rounded-xl border border-gray-800 p-4 flex flex-col items-center justify-center min-h-[160px]">
           {pieData.length > 0 ? (
@@ -131,16 +145,19 @@ export default function TodaySummary({ stats, todayMatrix, processes, loading }:
                     ))}
                   </Pie>
                   <Tooltip
+                    formatter={(val, name) => { const n = Number(val); return [`${n} run${n !== 1 ? "s" : ""}`, name]; }}
                     contentStyle={{ background: "#111827", border: "1px solid #374151", borderRadius: 8, fontSize: 12 }}
                     itemStyle={{ color: "#e5e7eb" }}
                   />
                 </PieChart>
+                {/* Center label: sum of per-bot run counts = total today */}
                 <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                  <span className="text-2xl font-bold text-white">{stats.totalRuns}</span>
-                  <span className="text-[10px] text-gray-500">runs</span>
+                  <span className="text-2xl font-bold text-white">{totalTodayRuns}</span>
+                  <span className="text-[10px] text-gray-500">run{totalTodayRuns !== 1 ? "s" : ""}</span>
                 </div>
               </div>
-              <div className="flex flex-wrap justify-center gap-x-3 gap-y-1 mt-1">
+              {/* Legend — values from breakdown, sum = totalRuns */}
+              <div className="flex flex-wrap justify-center gap-x-3 gap-y-1 mt-2">
                 {pieData.map((d) => (
                   <span key={d.name} className="flex items-center gap-1 text-[10px] text-gray-400">
                     <span className="w-2 h-2 rounded-full shrink-0" style={{ background: d.fill }} />
@@ -159,12 +176,12 @@ export default function TodaySummary({ stats, todayMatrix, processes, loading }:
           )}
         </div>
 
-        {/* KPI cards */}
+        {/* KPI cards — sub-text uses exact breakdown counts */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 content-start">
           <MetricCard
             label="Success Rate"
             value={`${stats.successRate}%`}
-            sub={stats.totalRuns > 0 ? `${failed} failed` : "No data"}
+            sub={stats.totalRuns > 0 ? `${failedCount} failed` : "No data"}
             borderColor="border-l-emerald-500"
             textColor="text-emerald-400"
           />
@@ -178,20 +195,26 @@ export default function TodaySummary({ stats, todayMatrix, processes, loading }:
           <MetricCard
             label="SLA Compliance"
             value={`${stats.slaCompliance}%`}
-            sub={stats.totalRuns > 0 ? `${slaIssues} issue${slaIssues !== 1 ? "s" : ""}` : "No data"}
+            sub={stats.totalRuns > 0 ? `${slaIssueCount} issue${slaIssueCount !== 1 ? "s" : ""}` : "No data"}
             borderColor="border-l-blue-500"
             textColor="text-blue-400"
           />
         </div>
       </div>
 
-      {/* Row 2: Per-bot run list */}
+      {/* ── Row 2: Per-bot run list ──────────────────────────────────────── */}
       {todayRuns.length > 0 && (
         <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
           <div className="px-4 py-2.5 border-b border-gray-800 flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase tracking-widest text-gray-400">
-              Today&apos;s Runs
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold uppercase tracking-widest text-gray-400">
+                Today&apos;s Runs
+              </span>
+              {/* totalTodayRuns = sum of each bot's runCount — same as donut center */}
+              <span className="text-[10px] text-gray-600 bg-gray-800 px-1.5 py-0.5 rounded-full">
+                {totalTodayRuns} run{totalTodayRuns !== 1 ? "s" : ""} · {todayRuns.length} bot{todayRuns.length !== 1 ? "s" : ""}
+              </span>
+            </div>
             {pendingCount > 0 && (
               <span className="text-[10px] text-gray-600">
                 {pendingCount} bot{pendingCount !== 1 ? "s" : ""} not run yet
@@ -205,10 +228,20 @@ export default function TodaySummary({ stats, todayMatrix, processes, loading }:
                   ? Math.min((cell.durationSec / def.slaMaxDuration) * 100, 100)
                   : null;
               const barBg = BAR_COLOR[cell.status] ?? "bg-gray-600";
-              const badge = STATUS_CFG[cell.status];
+              const cfgEntry = BREAKDOWN_CFG.find((c) => c.status === cell.status);
               return (
                 <div key={processName} className="px-4 py-2.5 flex items-center gap-3">
-                  <span className="text-sm text-gray-200 truncate w-36 shrink-0">{processName}</span>
+                  {/* Bot name */}
+                  <span className="text-sm text-gray-200 truncate w-36 shrink-0" title={processName}>
+                    {processName}
+                  </span>
+
+                  {/* Run count — always visible as a card */}
+                  <span className="shrink-0 flex items-center justify-center min-w-[36px] h-6 bg-gray-800 border border-gray-700 rounded-md px-1.5 text-[11px] font-bold text-gray-300">
+                    {cell.runCount}×
+                  </span>
+
+                  {/* Duration bar vs SLA */}
                   {slaPct !== null ? (
                     <div className="flex-1 flex items-center gap-2 min-w-0">
                       <div className="flex-1 h-1.5 bg-gray-800 rounded-full overflow-hidden">
@@ -227,11 +260,13 @@ export default function TodaySummary({ stats, todayMatrix, processes, loading }:
                   ) : (
                     <div className="flex-1" />
                   )}
-                  <span
-                    className={`shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded border ${badge.bg} ${badge.text} ${badge.border}`}
-                  >
-                    {badge.label}
-                  </span>
+
+                  {/* Status badge */}
+                  {cfgEntry && (
+                    <span className={`shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded border ${cfgEntry.bg} ${cfgEntry.text} ${cfgEntry.border}`}>
+                      {cfgEntry.label}
+                    </span>
+                  )}
                 </div>
               );
             })}

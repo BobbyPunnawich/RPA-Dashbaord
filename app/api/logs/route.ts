@@ -8,6 +8,20 @@ function timeToMinutes(t: string): number {
   return h * 60 + m;
 }
 
+/**
+ * Parse a PAD timestamp string.
+ * PAD bots send local ICT time either without a TZ designator ("2026-04-29T10:15:00")
+ * or with a bare "Z" that incorrectly marks the local time as UTC
+ * ("2026-04-29T10:15:00Z"). In both cases the numeric value IS the local ICT time
+ * — we preserve it as-is so that 10:15 is stored as 10:15 UTC, which the
+ * frontend then displays as "10:15" without any further conversion.
+ * Do NOT append +07:00 here; that would shift the stored epoch by -7 h and
+ * cause the display (UTC) to show 03:15 instead of 10:15.
+ */
+function parseTimestamp(iso: string): Date {
+  return new Date(iso);
+}
+
 /** Return the higher-priority status */
 const STATUS_PRIORITY: Record<CellStatus, number> = {
   None: 0,
@@ -20,22 +34,22 @@ function higherPriority(a: CellStatus, b: CellStatus): CellStatus {
   return STATUS_PRIORITY[b] > STATUS_PRIORITY[a] ? b : a;
 }
 
-/** Day offset (1-based) from startRange */
+/**
+ * Day offset (1-based) from startRange.
+ * Data is stored as ICT-value-at-UTC (10:15 ICT → 10:15 UTC), so simple
+ * UTC-day arithmetic gives the correct calendar column.
+ */
 function dayIndex(logDate: Date, startRange: Date): number {
-  const s = new Date(startRange);
-  s.setHours(0, 0, 0, 0);
-  const d = new Date(logDate);
-  d.setHours(0, 0, 0, 0);
-  return Math.floor((d.getTime() - s.getTime()) / 86_400_000) + 1;
+  const MS = 86_400_000;
+  return Math.floor(logDate.getTime() / MS) - Math.floor(startRange.getTime() / MS) + 1;
 }
 
-/** Column label: show "M/D" only if date is not in the same month as startRange */
+/** Column label: "D" within same month, "M/D" across months — UTC calendar. */
 function dateLabel(offset: number, startRange: Date): string {
   const d = new Date(startRange.getTime() + (offset - 1) * 86_400_000);
-  const sameMonth = d.getMonth() === startRange.getMonth();
-  return sameMonth
-    ? String(d.getDate())
-    : `${d.getMonth() + 1}/${d.getDate()}`;
+  return d.getUTCMonth() === startRange.getUTCMonth()
+    ? String(d.getUTCDate())
+    : `${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
 }
 
 // ─────────────────────────────────────────
@@ -64,26 +78,47 @@ export async function POST(request: NextRequest) {
     remarks,
   } = payload;
 
+  // ── Log every incoming payload so issues are visible in the terminal ──
+  console.log("[POST /api/logs] received payload:", {
+    processName, status, startTime, endTime, runBy, errorCode,
+    errorMessage: errorMessage?.slice(0, 80),
+  });
+
   // ── Validate required fields ──
   if (!processName || !status || !startTime || !endTime) {
+    console.warn("[POST /api/logs] 422 missing fields:", { processName, status, startTime, endTime });
     return NextResponse.json(
       { error: "Missing required fields: processName, status, startTime, endTime" },
       { status: 422 }
     );
   }
-  if (status !== "Success" && status !== "Failed") {
-    return NextResponse.json({ error: 'status must be "Success" or "Failed"' }, { status: 422 });
+
+  // PAD uses "None" as its "no error occurred" sentinel.
+  // Treat it as a successful completion so runs are not silently discarded.
+  const resolvedStatus: "Success" | "Failed" =
+    status === "None" || status === "Success" ? "Success" : "Failed";
+
+  if (status !== "Success" && status !== "Failed" && status !== "None") {
+    console.warn("[POST /api/logs] 422 unrecognised status:", status);
+    return NextResponse.json(
+      { error: 'status must be "Success", "Failed", or "None"' },
+      { status: 422 }
+    );
   }
-  if (status === "Failed" && !errorMessage) {
+  if (resolvedStatus === "Failed" && !errorMessage) {
+    console.warn("[POST /api/logs] 422 Failed but no errorMessage");
     return NextResponse.json(
       { error: "errorMessage is required when status is Failed" },
       { status: 422 }
     );
   }
+  if (status === "None") {
+    console.log('[POST /api/logs] status "None" mapped to "Success" (PAD no-error sentinel)');
+  }
 
-  // ── Server-side duration calculation ──
-  const start = new Date(startTime);
-  const end = new Date(endTime);
+  // ── Server-side duration & SLA calculation ──
+  const start = parseTimestamp(startTime);
+  const end   = parseTimestamp(endTime);
   const durationSec = Math.max(0, Math.round((end.getTime() - start.getTime()) / 1000));
 
   // ── Auto-register process if it doesn't exist ──
@@ -114,7 +149,7 @@ export async function POST(request: NextRequest) {
       const summary = await tx.summaryLog.create({
         data: {
           processName,
-          status,
+          status: resolvedStatus,
           startTime: start,
           endTime: end,
           durationSec,
@@ -127,7 +162,7 @@ export async function POST(request: NextRequest) {
         },
       });
 
-      if (status === "Failed") {
+      if (resolvedStatus === "Failed") {
         await tx.errorDetail.create({
           data: {
             transactionId: summary.transactionId,
@@ -141,6 +176,8 @@ export async function POST(request: NextRequest) {
       return summary;
     });
 
+    console.log("[POST /api/logs] saved → id=%d txId=%s status=%s dur=%ds",
+      result.id, result.transactionId, resolvedStatus, durationSec);
     return NextResponse.json(
       {
         success: true,
@@ -164,7 +201,6 @@ export async function POST(request: NextRequest) {
 //         search (processName or owner substring)
 // ─────────────────────────────────────────
 export async function GET(request: NextRequest) {
-  // Temporary: verify the app is reading DATABASE_URL (password masked)
   const rawUrl = process.env.DATABASE_URL ?? "(not set)";
   const maskedUrl = rawUrl.replace(/:([^@]+)@/, ":***@");
   console.log("[GET /api/logs] DATABASE_URL =", maskedUrl);
@@ -178,10 +214,13 @@ export async function GET(request: NextRequest) {
   let endRange: Date;
 
   if (fromParam && toParam) {
-    startRange = new Date(fromParam);
-    startRange.setHours(0, 0, 0, 0);
-    endRange = new Date(toParam);
-    endRange.setHours(23, 59, 59, 999);
+    // Plain UTC midnight boundaries. Data is stored as ICT-value-at-UTC
+    // (e.g. 10:15 ICT → 10:15Z), so the UTC calendar day equals the ICT
+    // calendar day and no offset shift is needed here.
+    startRange = new Date(fromParam + "T00:00:00.000Z");
+    endRange   = new Date(toParam   + "T23:59:59.999Z");
+    console.log("[GET /api/logs] from=%s to=%s → range %s – %s",
+      fromParam, toParam, startRange.toISOString(), endRange.toISOString());
   } else {
     const now = new Date();
     const month = parseInt(searchParams.get("month") ?? String(now.getMonth() + 1));
@@ -225,6 +264,7 @@ export async function GET(request: NextRequest) {
       include: { errorDetail: true },
       orderBy: { startTime: "asc" },
     });
+    console.log("[GET /api/logs] query returned %d log(s)", logs.length);
 
     // ── KPI stats ──
     const total = logs.length;
@@ -236,6 +276,12 @@ export async function GET(request: NextRequest) {
         : 0;
     const slaIssues = logs.filter((l) => l.isSLABreach || l.isLateStart).length;
     const slaCompliance = total > 0 ? Math.round(((total - slaIssues) / total) * 100) : 100;
+
+    // ── Exact per-status breakdown (used for accurate chart counts) ──
+    const cntFailed    = logs.filter((l) => l.status === "Failed").length;
+    const cntSLABreach = logs.filter((l) => l.status === "Success" && l.isSLABreach).length;
+    const cntLateStart = logs.filter((l) => l.status === "Success" && !l.isSLABreach && l.isLateStart).length;
+    const cntSuccess   = logs.filter((l) => l.status === "Success" && !l.isSLABreach && !l.isLateStart).length;
 
     // ── Matrix ──
     type DayCell = {
@@ -321,12 +367,36 @@ export async function GET(request: NextRequest) {
       }),
     }));
 
+    // ── All-time run counts per process (for the "Runs" sticky column) ──
+    // This is a lightweight groupBy — one row per process, never the full log set.
+    const allTimeGroups = await prisma.summaryLog.groupBy({
+      by: ["processName"],
+      _count: { id: true },
+    });
+    const allTimeCounts: Record<string, number> = {};
+    for (const row of allTimeGroups) {
+      allTimeCounts[row.processName] = row._count.id;
+    }
+
     return NextResponse.json({
-      stats: { successRate, avgDurationSec, slaCompliance, totalRuns: total },
+      stats: {
+        totalRuns: total,
+        successRate,
+        slaCompliance,
+        avgDurationSec,
+        breakdown: {
+          success:   cntSuccess,
+          lateStart: cntLateStart,
+          slaBreach: cntSLABreach,
+          failed:    cntFailed,
+          slaIssues,
+        },
+      },
       matrix,
       totalDays,
       startDate: startRange.toISOString(),
       endDate: endRange.toISOString(),
+      allTimeCounts,
     });
   } catch (error) {
     console.error("[GET /api/logs]", error);
