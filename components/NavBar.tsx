@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Settings, Users } from "lucide-react";
+import GuidedTour from "@/components/GuidedTour";
 
 export default function NavBar() {
   const pathname = usePathname();
@@ -18,11 +19,12 @@ export default function NavBar() {
 
   return (
     <nav className="ml-auto flex items-center gap-1">
+      <GuidedTour />
       <Link href="/developers" className={navCls("/developers")}>
         <Users size={13} />
         Developer Profile
       </Link>
-      <Link href="/settings" className={navCls("/settings")}>
+      <Link id="tour-nav-settings" href="/settings" className={navCls("/settings")}>
         <Settings size={13} />
         Bot Settings
       </Link>

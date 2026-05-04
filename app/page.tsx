@@ -1,11 +1,13 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Search, RefreshCw, CalendarDays, AlertTriangle, X } from "lucide-react";
+import { Search, RefreshCw, CalendarDays, AlertTriangle, X, Send, Download } from "lucide-react";
+import { downloadXlsx } from "@/lib/exportXlsx";
 import TodaySummary from "@/components/TodaySummary";
 import MatrixGrid from "@/components/MatrixGrid";
 import IssuesTable, { IssueErrorInfo } from "@/components/IssuesTable";
 import ErrorModal from "@/components/ErrorModal";
+import DigestReportModal from "@/components/DigestReportModal";
 import { DashboardStats, ProcessMatrix, ProcessDefinition } from "@/types/rpa";
 
 // Date input state holds AD (Gregorian) "YYYY-MM-DD". All DB records are CE after the fix-dates migration.
@@ -66,6 +68,7 @@ export default function DashboardPage() {
   const [refreshKey, setRefreshKey]             = useState(0);
   const [toasts, setToasts]                     = useState<AlertToast[]>([]);
   const [modalError, setModalError]             = useState<IssueErrorInfo | null>(null);
+  const [showDigest, setShowDigest]             = useState(false);
   const seenIssueIds                            = useRef<Set<string>>(new Set());
   const hasLoadedOnce                           = useRef(false);
 
@@ -171,6 +174,66 @@ export default function DashboardPage() {
 
   function handleRefresh() { setRefreshKey((k) => k + 1); }
 
+  function handleExport() {
+    if (!data) return;
+
+    // Sheet 1: one row per bot (summary)
+    const summaryRows = data.matrix.map(({ processName, cells }) => {
+      const proc = processes.find((p) => p.processName === processName);
+      const activeCells = cells.filter((c) => c.runCount > 0);
+      const totalRuns   = cells.reduce((s, c) => s + c.runCount, 0);
+      const successDays = cells.filter((c) => c.status === "Success").length;
+      const failedDays  = cells.filter((c) => c.status === "Failed").length;
+      const slaDays     = cells.filter((c) => c.status === "SLABreach").length;
+      const lateDays    = cells.filter((c) => c.status === "LateStart").length;
+      const successRate = activeCells.length > 0
+        ? Math.round((successDays / activeCells.length) * 100)
+        : 100;
+      return {
+        "Bot Name":          processName,
+        "Owner":             proc?.owner      ?? "—",
+        "Bot Type":          proc?.botType    ?? "—",
+        "SLA Max (s)":       proc?.slaMaxDuration ?? 0,
+        "Total Runs":        totalRuns,
+        "Active Days":       activeCells.length,
+        "Success Days":      successDays,
+        "Failed Days":       failedDays,
+        "SLA Breach Days":   slaDays,
+        "Late Start Days":   lateDays,
+        "Success Rate (%)":  successRate,
+        "Period From":       range.from,
+        "Period To":         range.to,
+      };
+    });
+
+    // Sheet 2: one row per bot per active day
+    const dailyRows = data.matrix.flatMap(({ processName, cells }) => {
+      const proc = processes.find((p) => p.processName === processName);
+      return cells
+        .filter((c) => c.runCount > 0)
+        .map((c) => ({
+          "Bot Name":       processName,
+          "Owner":          proc?.owner ?? "—",
+          "Date":           c.dateLabel,
+          "Runs":           c.runCount,
+          "Day Status":     c.status,
+          "Duration (s)":   c.durationSec ?? "—",
+          "Volume":         c.volumeCount ?? "—",
+          "Transaction ID": c.transactionId ?? "—",
+        }));
+    });
+
+    const safeFrom = range.from.replace(/-/g, "");
+    const safeTo   = range.to.replace(/-/g, "");
+    downloadXlsx(
+      [
+        { name: "Bot Summary",  rows: summaryRows },
+        { name: "Daily Detail", rows: dailyRows   },
+      ],
+      `RPA_Dashboard_${safeFrom}_${safeTo}`,
+    );
+  }
+
   const _now      = new Date();
   const _beYear   = _now.getUTCFullYear() + 543;
   const todayLabel = `${_now.toLocaleDateString("en-US", {
@@ -181,7 +244,7 @@ export default function DashboardPage() {
     <div className="space-y-6">
 
       {/* ── Today's Summary ────────────────────────────────────────────────── */}
-      <section>
+      <section id="tour-today-summary">
         <div className="flex items-center gap-3 mb-3">
           <h2 className="text-base font-bold text-white">Today&apos;s Summary</h2>
           <span className="text-xs text-gray-600">{todayLabel}</span>
@@ -202,17 +265,20 @@ export default function DashboardPage() {
       </section>
 
       {/* ── Issues Summary ─────────────────────────────────────────────────── */}
-      {!loadingToday && (
-        <IssuesTable
-          todayMatrix={todayMatrix}
-          processes={processes}
-          stats={todayStats}
-          onErrorClick={setModalError}
-        />
-      )}
+      {/* Wrapper always in DOM so the tour can reference it even when empty   */}
+      <div id="tour-issues">
+        {!loadingToday && (
+          <IssuesTable
+            todayMatrix={todayMatrix}
+            processes={processes}
+            stats={todayStats}
+            onErrorClick={setModalError}
+          />
+        )}
+      </div>
 
       {/* ── Filters ────────────────────────────────────────────────────────── */}
-      <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
+      <div id="tour-filters" className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
         <div className="flex items-center gap-2 bg-gray-900 border border-gray-700 rounded-xl px-3 py-2">
           <CalendarDays size={15} className="text-gray-500 shrink-0" />
           <input
@@ -239,10 +305,38 @@ export default function DashboardPage() {
             <button onClick={() => setSearch("")} className="text-gray-600 hover:text-gray-300 text-xs leading-none">×</button>
           )}
         </div>
+
+        <div className="flex items-center gap-2 sm:ml-auto shrink-0">
+          <button
+            onClick={handleExport}
+            disabled={!data || loadingDash}
+            className="flex items-center gap-2 px-3 py-2 rounded-xl border border-gray-700 bg-gray-900 text-gray-300 hover:bg-gray-800 hover:text-white disabled:opacity-40 text-sm font-medium transition-colors"
+            title="Export matrix data to Excel"
+          >
+            <Download size={14} />
+            <span>Export XLSX</span>
+          </button>
+          <button
+            onClick={() => setShowDigest(true)}
+            className="flex items-center gap-2 px-3 py-2 rounded-xl border border-indigo-700/50 bg-indigo-900/20 text-indigo-300 hover:bg-indigo-800/40 hover:text-white text-sm font-medium transition-colors"
+            title="Send a bot performance digest to owners"
+          >
+            <Send size={14} />
+            <span>Send Report to My Email</span>
+          </button>
+        </div>
       </div>
 
+      {showDigest && (
+        <DigestReportModal
+          initialFrom={range.from}
+          initialTo={range.to}
+          onClose={() => setShowDigest(false)}
+        />
+      )}
+
       {/* ── Operational Matrix ─────────────────────────────────────────────── */}
-      <section>
+      <section id="tour-matrix">
         <div className="flex items-center gap-3 mb-3">
           <h2 className="text-base font-bold text-white">Operational Matrix</h2>
           <span className="text-xs text-gray-600">{range.from} → {range.to}</span>

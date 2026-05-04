@@ -40,7 +40,7 @@ export default function DevelopersPage() {
   return (
     <div className="space-y-8">
 
-      <div className="flex items-start justify-between gap-4">
+      <div id="tour-devs-header" className="flex items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 mb-1">
             <Link href="/" className="flex items-center gap-1 text-sm text-gray-500 hover:text-white transition-colors">
@@ -55,7 +55,7 @@ export default function DevelopersPage() {
             Manage developers who can be assigned as bot owners.
           </p>
         </div>
-        <div className="flex items-center gap-2 mt-1">
+        <div id="tour-add-developer" className="flex items-center gap-2 mt-1">
           <button onClick={load} title="Refresh"
             className="p-2 rounded-xl border border-gray-700 bg-gray-900 text-gray-400 hover:text-white hover:bg-gray-800 transition-colors">
             <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
@@ -91,7 +91,7 @@ export default function DevelopersPage() {
           </button>
         </div>
       ) : devs.length > 0 ? (
-        <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
+        <div id="tour-devs-table" className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-800 text-left">

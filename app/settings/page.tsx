@@ -215,11 +215,11 @@ function EditRow({ proc, onSaved, onCancel }: EditRowProps) {
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function SettingsPage() {
-  const [processes,  setProcesses]  = useState<ProcessDefinition[]>([]);
-  const [loading,    setLoading]    = useState(true);
-  const [editId,     setEditId]     = useState<number | null>(null);
-  const [deleteId,   setDeleteId]   = useState<number | null>(null);
-  const [deleting,   setDeleting]   = useState(false);
+  const [processes,   setProcesses]   = useState<ProcessDefinition[]>([]);
+  const [loading,     setLoading]     = useState(true);
+  const [editId,      setEditId]      = useState<number | null>(null);
+  const [deleteId,    setDeleteId]    = useState<number | null>(null);
+  const [deleting,    setDeleting]    = useState(false);
 
   const fetchProcesses = useCallback(async () => {
     setLoading(true);
@@ -262,13 +262,15 @@ export default function SettingsPage() {
             Auto-registered bots appear here after their first run.
           </p>
         </div>
-        <button onClick={fetchProcesses} title="Refresh" className="p-2 rounded-xl border border-gray-700 bg-gray-900 text-gray-400 hover:text-white hover:bg-gray-800 transition-colors mt-1">
+        <button onClick={fetchProcesses} title="Refresh" className="p-2 mt-1 rounded-xl border border-gray-700 bg-gray-900 text-gray-400 hover:text-white hover:bg-gray-800 transition-colors">
           <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
         </button>
       </div>
 
       {/* ── Add Bot ──────────────────────────────────────────────────────────── */}
-      <AddBotRow onAdded={fetchProcesses} />
+      <div id="tour-add-bot">
+        <AddBotRow onAdded={fetchProcesses} />
+      </div>
 
       {/* ── Stats ────────────────────────────────────────────────────────────── */}
       {!loading && (
@@ -295,6 +297,7 @@ export default function SettingsPage() {
       )}
 
       {/* ── Table ────────────────────────────────────────────────────────────── */}
+      <div id="tour-bot-registry">
       {loading ? (
         <div className="bg-gray-900 rounded-xl border border-gray-800 p-8 text-center text-sm text-gray-500 animate-pulse">Loading…</div>
       ) : processes.length === 0 ? (
@@ -344,6 +347,7 @@ export default function SettingsPage() {
           )}
         </>
       )}
+      </div>{/* /tour-bot-registry */}
     </div>
   );
 }

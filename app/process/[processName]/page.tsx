@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useEffect, useState, useCallback } from "react";
-import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, ChevronDown, ChevronRight, RefreshCw, Pencil, Check, X } from "lucide-react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { ArrowLeft, ChevronDown, ChevronRight, RefreshCw, Pencil, Check, X, Download } from "lucide-react";
+import { downloadXlsx } from "@/lib/exportXlsx";
 import { ProcessDefinition } from "@/types/rpa";
 import ErrorBubbleChart from "@/components/ErrorBubbleChart";
 import DailyRunChart from "@/components/DailyRunChart";
@@ -64,15 +65,19 @@ const STATUS_STYLES: Record<RunStatus, { bg: string; text: string; border: strin
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 export default function ProcessBacklogPage() {
-  const params      = useParams();
-  const router      = useRouter();
-  const processName = decodeURIComponent(params.processName as string);
+  const params        = useParams();
+  const router        = useRouter();
+  const searchParams  = useSearchParams();
+  const processName   = decodeURIComponent(params.processName as string);
+  // ?tx=<transactionId> deep-link from failure email — auto-expand that row
+  const initialTx     = searchParams.get("tx") ?? null;
 
   const [runs,       setRuns]       = useState<RunRecord[]>([]);
   const [processDef, setProcessDef] = useState<ProcessDefinition | null>(null);
   const [loading,    setLoading]    = useState(true);
   const [expanded,   setExpanded]   = useState<Set<string>>(new Set());
   const [todayCount, setTodayCount] = useState(0);
+  const deepLinkRowRef = useRef<HTMLTableRowElement | null>(null);
 
   // ── SLA inline-edit state ──────────────────────────────────────────────────
   const [editingSLA, setEditingSLA] = useState(false);
@@ -123,6 +128,20 @@ export default function ProcessBacklogPage() {
 
   useEffect(() => { fetchData(); fetchTodayCount(); }, [fetchData, fetchTodayCount]);
 
+  // When arriving via a deep-link (?tx=...), auto-expand and scroll to that row
+  // after runs finish loading.
+  useEffect(() => {
+    if (!initialTx || loading || runs.length === 0) return;
+    setExpanded((prev) => {
+      if (prev.has(initialTx)) return prev;
+      return new Set([...prev, initialTx]);
+    });
+    // Defer scroll until after React paints the expanded accordion row
+    requestAnimationFrame(() => {
+      deepLinkRowRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  }, [initialTx, loading, runs]);
+
   function toggleExpanded(id: string) {
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -164,6 +183,25 @@ export default function ProcessBacklogPage() {
     : 0;
 
 
+  function handleExport() {
+    const rows = runs.map((run) => ({
+      "Transaction ID":  run.transactionId,
+      "Start Time":      fmtDateTime(run.startTime),
+      "End Time":        run.endTime ? fmtDateTime(run.endTime) : "—",
+      "Duration":        fmtDuration(Math.round(run.durationSec)),
+      "Duration (s)":    Math.round(run.durationSec),
+      "Run By":          run.runBy ?? "—",
+      "Status":          resolveStatus(run),
+      "Late Start":      run.isLateStart  ? "Yes" : "No",
+      "SLA Breach":      run.isSLABreach  ? "Yes" : "No",
+      "Error Code":      run.errorCode    ?? "—",
+      "Error Message":   run.errorDetail?.errorMessage ?? "—",
+      "Screenshot Path": run.errorDetail?.screenshotPath ?? "—",
+    }));
+    const safeName = processName.replace(/[^a-zA-Z0-9_-]/g, "_");
+    downloadXlsx([{ name: "Run History", rows }], `RPA_${safeName}_RunHistory`);
+  }
+
   return (
     <div className="space-y-6">
 
@@ -176,13 +214,24 @@ export default function ProcessBacklogPage() {
           <ArrowLeft size={15} />
           Back to Dashboard
         </button>
-        <button
-          onClick={() => { fetchData(); fetchTodayCount(); }}
-          className="p-2 rounded-xl border border-gray-700 bg-gray-900 text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
-          title="Refresh"
-        >
-          <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleExport}
+            disabled={loading || runs.length === 0}
+            className="flex items-center gap-2 px-3 py-2 rounded-xl border border-gray-700 bg-gray-900 text-gray-300 hover:bg-gray-800 hover:text-white disabled:opacity-40 text-sm font-medium transition-colors"
+            title="Export run history to Excel"
+          >
+            <Download size={14} />
+            <span>Export XLSX</span>
+          </button>
+          <button
+            onClick={() => { fetchData(); fetchTodayCount(); }}
+            className="p-2 rounded-xl border border-gray-700 bg-gray-900 text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
+            title="Refresh"
+          >
+            <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+          </button>
+        </div>
       </div>
 
       {/* ── Header ──────────────────────────────────────────────────────────── */}
@@ -210,7 +259,7 @@ export default function ProcessBacklogPage() {
       )}
 
       {/* ── KPI cards ───────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div id="tour-process-kpis" className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
 
         <div className="bg-gray-900 rounded-xl border border-gray-800 px-4 py-3">
           <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-500">Total Runs</p>
@@ -297,13 +346,14 @@ export default function ProcessBacklogPage() {
 
       {/* ── Charts ─────────────────────────────────────────────────────────── */}
       {!loading && runs.length > 0 && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div id="tour-process-charts" className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <DailyRunChart runs={runs} />
           <ErrorBubbleChart runs={runs} />
         </div>
       )}
 
       {/* ── Run table ───────────────────────────────────────────────────────── */}
+      <div id="tour-process-runs">
       {loading ? (
         <div className="bg-gray-900 rounded-xl border border-gray-800 p-8 text-center text-sm text-gray-500 animate-pulse">
           Loading runs…
@@ -335,10 +385,13 @@ export default function ProcessBacklogPage() {
                   const isOpen   = expanded.has(run.transactionId);
                   const rowBg    = i % 2 === 0 ? "" : "bg-gray-800/20";
 
+                  const isDeepLinked = run.transactionId === initialTx;
+
                   return (
                     <React.Fragment key={run.transactionId}>
                       <tr
-                        className={`border-b border-gray-800/50 ${rowBg} ${isFailed ? "cursor-pointer hover:bg-red-950/20" : ""} transition-colors`}
+                        ref={isDeepLinked ? deepLinkRowRef : null}
+                        className={`border-b border-gray-800/50 ${rowBg} ${isFailed ? "cursor-pointer hover:bg-red-950/20" : ""} ${isDeepLinked ? "ring-1 ring-inset ring-indigo-500/60" : ""} transition-colors`}
                         onClick={isFailed ? () => toggleExpanded(run.transactionId) : undefined}
                       >
                         <td className="px-4 py-3 font-mono text-xs text-gray-300 whitespace-nowrap">
@@ -405,6 +458,7 @@ export default function ProcessBacklogPage() {
           </div>
         </div>
       )}
+      </div>{/* /tour-process-runs */}
     </div>
   );
 }

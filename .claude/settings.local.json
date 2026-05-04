@@ -21,7 +21,9 @@
       "Bash(curl:*)",
       "Bash(npx next *)",
       "PowerShell(Stop-Process *)",
-      "Bash(npm i *)"
+      "Bash(npm i *)",
+      "Bash(npm list *)",
+      "Bash(node -e \"require.resolve\\('driver.js'\\); console.log\\('driver.js found'\\); require.resolve\\('driver.js/dist/driver.css'\\); console.log\\('driver.css found'\\)\")"
     ]
   }
 }
