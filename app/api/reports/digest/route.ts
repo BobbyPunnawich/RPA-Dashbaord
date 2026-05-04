@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { sendDigestEmail, DigestBotStats, DigestEmailPayload } from "@/lib/notifications";
+import {
+  sendDigestEmail,
+  DigestBotStats,
+  DigestEmailPayload,
+  DigestTransaction,
+  RunStatus,
+} from "@/lib/notifications";
 
 export async function POST(req: Request) {
   let from: string, to: string, owner: string;
@@ -11,10 +17,7 @@ export async function POST(req: Request) {
   }
 
   if (!from || !to || !owner) {
-    return NextResponse.json(
-      { error: "from, to, and owner are required" },
-      { status: 422 }
-    );
+    return NextResponse.json({ error: "from, to, and owner are required" }, { status: 422 });
   }
 
   const startRange = new Date(from + "T00:00:00.000Z");
@@ -27,7 +30,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "from must be before or equal to to." }, { status: 422 });
   }
 
-  // ── Build owner → botNames map from process definitions ──────────────────────
   const allProcs = await prisma.processDefinition.findMany();
   const ownerToBots = new Map<string, string[]>();
   for (const p of allProcs) {
@@ -37,7 +39,6 @@ export async function POST(req: Request) {
     ownerToBots.set(p.owner, list);
   }
 
-  // ── Determine target owners ───────────────────────────────────────────────────
   const targetOwners =
     owner === "all"
       ? Array.from(ownerToBots.keys())
@@ -47,22 +48,23 @@ export async function POST(req: Request) {
     return NextResponse.json({ sent: 0, recipients: [], skipped: 0 });
   }
 
-  // ── Fetch logs for relevant bots only ────────────────────────────────────────
   const relevantBots = new Set(targetOwners.flatMap((o) => ownerToBots.get(o) ?? []));
+
+  // Fetch logs with errorDetail so we can include error messages in transaction rows
   const logs = await prisma.summaryLog.findMany({
     where: {
       startTime:   { gte: startRange, lte: endRange },
       processName: { in: Array.from(relevantBots) },
     },
+    include:  { errorDetail: true },
+    orderBy:  { startTime: "desc" },  // newest first for transaction table
   });
 
-  // ── Fetch developer emails for target owners in one query ─────────────────────
   const developers = await prisma.developer.findMany({
     where: { fullName: { in: targetOwners } },
   });
   const devMap = new Map(developers.map((d) => [d.fullName, d]));
 
-  // ── Send one digest per owner ─────────────────────────────────────────────────
   const recipients: { owner: string; email: string; bots: number; runs: number }[] = [];
   let skipped = 0;
 
@@ -74,21 +76,37 @@ export async function POST(req: Request) {
     const ownerLogs = logs.filter((l) => botNames.includes(l.processName));
     if (ownerLogs.length === 0) { skipped++; continue; }
 
-    // ── Per-bot stats ───────────────────────────────────────────────────────────
+    // ── Per-bot stats + transactions ───────────────────────────────────────────
     const botStatsMap = new Map<string, {
       runs: number; failed: number; slaBreaches: number;
       lateStarts: number; totalDuration: number;
+      transactions: DigestTransaction[];
     }>();
 
     for (const log of ownerLogs) {
       const s = botStatsMap.get(log.processName) ?? {
-        runs: 0, failed: 0, slaBreaches: 0, lateStarts: 0, totalDuration: 0,
+        runs: 0, failed: 0, slaBreaches: 0, lateStarts: 0, totalDuration: 0, transactions: [],
       };
       s.runs++;
       if (log.status === "Failed") s.failed++;
-      if (log.isSLABreach)  s.slaBreaches++;
-      if (log.isLateStart)  s.lateStarts++;
+      if (log.isSLABreach)         s.slaBreaches++;
+      if (log.isLateStart)         s.lateStarts++;
       s.totalDuration += log.durationSec;
+
+      let txStatus: RunStatus;
+      if (log.status === "Failed") txStatus = "Failed";
+      else if (log.isSLABreach)    txStatus = "SLABreach";
+      else if (log.isLateStart)    txStatus = "LateStart";
+      else                         txStatus = "Success";
+
+      s.transactions.push({
+        transactionId: log.transactionId,
+        startTime:     log.startTime,
+        durationSec:   log.durationSec,
+        status:        txStatus,
+        errorMessage:  log.errorDetail?.errorMessage ?? null,
+      });
+
       botStatsMap.set(log.processName, s);
     }
 
@@ -101,17 +119,17 @@ export async function POST(req: Request) {
         lateStarts:     s.lateStarts,
         successRate:    s.runs > 0 ? Math.round(((s.runs - s.failed) / s.runs) * 100) : 100,
         avgDurationSec: s.runs > 0 ? Math.round(s.totalDuration / s.runs) : 0,
+        // already ordered newest-first from the DB query; limit to 25 per bot
+        transactions:   s.transactions.slice(0, 25),
       }))
-      // Worst bots first, then alphabetical
       .sort((a, b) => b.failed - a.failed || b.slaBreaches - a.slaBreaches || a.processName.localeCompare(b.processName));
 
-    // ── Aggregate stats ─────────────────────────────────────────────────────────
-    const totalRuns    = ownerLogs.length;
-    const failedCount  = ownerLogs.filter((l) => l.status === "Failed").length;
-    const slaBreaches  = ownerLogs.filter((l) => l.isSLABreach).length;
-    const lateStarts   = ownerLogs.filter((l) => l.isLateStart).length;
-    const successRate  = totalRuns > 0 ? Math.round(((totalRuns - failedCount) / totalRuns) * 100) : 100;
-    const avgDuration  = totalRuns > 0
+    const totalRuns   = ownerLogs.length;
+    const failedCount = ownerLogs.filter((l) => l.status === "Failed").length;
+    const slaBreaches = ownerLogs.filter((l) => l.isSLABreach).length;
+    const lateStarts  = ownerLogs.filter((l) => l.isLateStart).length;
+    const successRate = totalRuns > 0 ? Math.round(((totalRuns - failedCount) / totalRuns) * 100) : 100;
+    const avgDuration = totalRuns > 0
       ? Math.round(ownerLogs.reduce((s, l) => s + l.durationSec, 0) / totalRuns)
       : 0;
 

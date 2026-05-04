@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { LogPayload, CellStatus } from "@/types/rpa";
-import { sendFailureEmail } from "@/lib/notifications";
+import { sendRunNotificationEmail } from "@/lib/notifications";
 
 /** Parse "HH:MM" → minutes since midnight */
 function timeToMinutes(t: string): number {
@@ -197,17 +197,24 @@ export async function POST(request: NextRequest) {
     console.log("[POST /api/logs] saved → id=%d txId=%s status=%s dur=%ds",
       result.id, result.transactionId, resolvedStatus, durationSec);
 
-    // Auto-notify the bot owner on failure — fire-and-forget so the response is never delayed.
-    if (resolvedStatus === "Failed" && processDef.owner && processDef.owner !== "Unassigned") {
-      sendFailureEmail({
+    // Notify bot owner on every run completion (fire-and-forget, never delays response).
+    if (processDef.owner && processDef.owner !== "Unassigned") {
+      let resolvedEmailStatus: "Success" | "Failed" | "SLABreach" | "LateStart";
+      if (resolvedStatus === "Failed") resolvedEmailStatus = "Failed";
+      else if (isSLABreach)           resolvedEmailStatus = "SLABreach";
+      else if (isLateStart)           resolvedEmailStatus = "LateStart";
+      else                            resolvedEmailStatus = "Success";
+
+      sendRunNotificationEmail({
         processName,
-        ownerName:     processDef.owner,
-        transactionId: result.transactionId,
-        errorMessage:  errorMessage!,
-        startTime:     start,
+        ownerName:      processDef.owner,
+        transactionId:  result.transactionId,
+        startTime:      start,
         durationSec,
+        resolvedStatus: resolvedEmailStatus,
+        errorMessage:   errorMessage ?? null,
       }).catch((err) =>
-        console.error("[POST /api/logs] failure email not sent:", err)
+        console.error("[POST /api/logs] run notification email not sent:", err)
       );
     }
 

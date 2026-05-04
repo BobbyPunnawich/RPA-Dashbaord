@@ -69,11 +69,21 @@ function dashboardSteps(): DriveStep[] {
       },
     },
     {
+      element: "#tour-nav-setup",
+      popover: {
+        title: "Bot Setup Checklist",
+        description:
+          "The amber badge shows how many bots still need configuration. Click here to open the Setup Checklist — a task-list view of every bot that is missing an owner or an SLA limit.\n\nCompleting setup unlocks failure alerts and SLA breach detection for those bots.",
+        side: "bottom",
+        align: "end",
+      },
+    },
+    {
       element: "#tour-nav-settings",
       popover: {
         title: "Bot Settings",
         description:
-          "Head here to assign owners to bots and configure SLA limits.\n\nOwners receive automatic failure alert emails whenever a bot they own fails. SLA limits define the maximum allowed run duration — exceeding it flags the run as an SLA Breach on this dashboard.",
+          "Full bot management lives here: add new bots, assign owners, set SLA limits, and switch between On-Demand and Scheduled types.\n\nOwners receive automatic email notifications on every run completion — success, failure, SLA breach, or late start.",
         side: "bottom",
         align: "end",
       },
@@ -203,6 +213,63 @@ function processDetailSteps(): DriveStep[] {
   return steps;
 }
 
+function setupSteps(): DriveStep[] {
+  const hasProgress = !!document.querySelector("#tour-setup-progress");
+  const hasCards    = !!document.querySelector("#tour-setup-cards");
+
+  const steps: DriveStep[] = [
+    {
+      element: "#tour-setup-header",
+      popover: {
+        title: "Bot Setup Checklist",
+        description:
+          "This page shows every bot that is missing critical configuration. A bot must have an Owner assigned and an SLA limit set before it can send failure alerts and detect SLA breaches on the dashboard.",
+        side: "bottom",
+        align: "start",
+      },
+    },
+  ];
+
+  if (hasProgress) {
+    steps.push({
+      element: "#tour-setup-progress",
+      popover: {
+        title: "Configuration Progress",
+        description:
+          "The progress bar shows how many of your bots are fully configured. The number on the right tells you how many still need attention. Work through the cards below to complete the setup.",
+        side: "bottom",
+        align: "start",
+      },
+    });
+  }
+
+  if (hasCards) {
+    steps.push({
+      element: "#tour-setup-cards",
+      popover: {
+        title: "Incomplete Bot Cards",
+        description:
+          "Each card represents a bot that needs attention. The checklist at the top of each card shows exactly which fields are missing.\n\n👤 Assign Owner — select the developer who receives email alerts for this bot.\n⏱ Set SLA Max — enter the max allowed run time in seconds.\n⚡ / 🕐 Bot Type — confirm whether the bot runs on-demand or on a fixed schedule.\n\nClick Save Changes when done. The card disappears once all fields are complete.",
+        side: "top",
+        align: "start",
+      },
+    });
+  }
+
+  steps.push({
+    element: "#tour-nav-settings",
+    popover: {
+      title: "More in Bot Settings",
+      description:
+        "For full bot management — adding new bots, renaming, deleting, or editing all fields at once — visit the Bot Settings page.\n\nThe Setup Checklist only shows bots with incomplete configuration. Bot Settings shows everything.",
+      side: "bottom",
+      align: "end",
+    },
+  });
+
+  return steps;
+}
+
 // ── Component ──────────────────────────────────────────────────────────────────
 
 export default function GuidedTour() {
@@ -237,6 +304,8 @@ export default function GuidedTour() {
       launch(settingsSteps());
     } else if (pathname === "/developers") {
       launch(developersSteps());
+    } else if (pathname === "/setup") {
+      launch(setupSteps());
     } else if (pathname.startsWith("/process/")) {
       launch(processDetailSteps());
     } else {
