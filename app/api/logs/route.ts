@@ -312,7 +312,7 @@ export async function GET(request: NextRequest) {
     const successRate = total > 0 ? Math.round((successes / total) * 100) : 0;
     const avgDurationSec =
       total > 0
-        ? Math.round((logs.reduce((s, l) => s + l.durationSec, 0) / total) * 10) / 10
+        ? Math.round(logs.reduce((s, l) => s + l.durationSec, 0) / total)
         : 0;
     const slaIssues = logs.filter((l) => l.isSLABreach || l.isLateStart).length;
     const slaCompliance = total > 0 ? Math.round(((total - slaIssues) / total) * 100) : 100;

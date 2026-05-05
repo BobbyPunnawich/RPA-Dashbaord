@@ -51,8 +51,8 @@ export default function KpiCards({ stats }: KpiCardsProps) {
         label="Avg Duration"
         value={
           stats.avgDurationSec >= 60
-            ? `${(stats.avgDurationSec / 60).toFixed(1)}m`
-            : `${stats.avgDurationSec}s`
+            ? `${Math.round(stats.avgDurationSec / 60)}m`
+            : `${Math.round(stats.avgDurationSec)}s`
         }
         sub="per run"
         accent="border-indigo-500 text-indigo-400"
